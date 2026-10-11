@@ -1,0 +1,16 @@
+# Build output
+/bin/
+/dist/
+*.test
+*.prof
+coverage.out
+
+# Local clusters
+/.cluster/
+/data/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
