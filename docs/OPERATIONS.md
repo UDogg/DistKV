@@ -55,7 +55,12 @@ fingerprinted in `<data-dir>/CLUSTER`. A node refuses to start if they change.
 
 * **Bare metal / VMs:** run `distkv` under systemd with `KillSignal=SIGTERM` and
   `TimeoutStopSec` greater than `--shutdown-timeout`.
-* **Docker Compose:** `deploy/docker-compose.yml` (3 nodes, Prometheus, Grafana).
+* **Single container (demo):** `docker run -p 8080:8080 --entrypoint distkv-demo distkv:local --listen 0.0.0.0:8080 --dir /data/demo --historian=false`
+  runs five nodes, traffic and the dashboard in one container (`make docker-demo`).
+* **Docker Compose:** `deploy/docker-compose.yml` runs 5 nodes, a load generator, the SQLite historian,
+  Prometheus and Grafana. Host-side clients need `--no-smart` / `smart=False`, because members advertise
+  container hostnames. The image runs as non-root (uid 65532) and writes to `/data`.
+  Step-by-step instructions are in [run.html](run.html).
 * **Kubernetes:** `deploy/kubernetes/distkv.yaml`. It uses a StatefulSet with
   `podManagementPolicy: Parallel` (pods must start together to form a quorum), a headless service
   with `publishNotReadyAddresses` (peers must resolve each other before they are ready), pod

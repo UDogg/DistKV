@@ -24,9 +24,11 @@ Every key lives in one of many Raft groups spread across the cluster. Kill any n
 <tr>
 <td align="center" width="33%">🌐<br><b>See it in your browser</b><br><sub>Simulation mode on GitHub Pages: nothing to install</sub><br><br><a href="https://udogg.github.io/DistKV/"><img src="https://img.shields.io/badge/open-live%20demo-7c5cff?style=for-the-badge"></a></td>
 <td align="center" width="33%">☁️<br><b>Run the real thing in the cloud</b><br><sub>Free Codespaces quota, then <code>make demo</code></sub><br><br><a href="https://codespaces.new/UDogg/DistKV"><img src="https://github.com/codespaces/badge.svg" height="28"></a></td>
-<td align="center" width="33%">💻<br><b>Run it locally</b><br><sub>Go 1.23+, no Docker needed</sub><br><br><code>make demo</code><br><sub>→ http://localhost:8080</sub></td>
+<td align="center" width="33%">🐳<br><b>Run it locally</b><br><sub>one container, or <code>make demo</code> with Go 1.23+</sub><br><br><code>make docker-demo</code><br><sub>→ http://localhost:8080</sub></td>
 </tr>
 </table>
+
+<p align="center">📘 <b>New here?</b> Follow the step-by-step <a href="https://udogg.github.io/DistKV/run.html"><b>Run guide</b></a> (<a href="docs/run.html">source</a>): one <code>docker run</code>, the full Compose stack, chaos commands and troubleshooting, all verified against a live cluster.</p>
 
 ---
 
@@ -240,6 +242,17 @@ SDK's test suite must reproduce it bit for bit. A client in any language therefo
 ## 🚀 Quick start
 
 <details open>
+<summary><b>One container</b> (5 nodes, traffic, dashboard: Docker only)</summary>
+
+```bash
+docker build -t distkv:local .
+docker run --rm -d --name distkv-demo -p 8080:8080 --entrypoint distkv-demo distkv:local \
+  --listen 0.0.0.0:8080 --dir /data/demo --historian=false
+# open http://localhost:8080 · stop with: docker stop distkv-demo   (or simply: make docker-demo)
+```
+</details>
+
+<details open>
 <summary><b>The full demo</b> (5 nodes, traffic, dashboard, historian)</summary>
 
 ```bash
@@ -301,7 +314,10 @@ make compose-up
 # grafana    http://localhost:3000
 docker compose -f deploy/docker-compose.yml kill distkv3        # chaos
 curl -X POST localhost:7002/v1/admin/faults -d '{"isolated":true}'   # partition n2
+bin/distkvctl --endpoints http://localhost:7001 --no-smart get greeting   # host clients: --no-smart
 ```
+Clients on the host must disable smart routing (`--no-smart`, `smart=False`, `DisableSmartRouting`), because the
+cluster advertises container hostnames. The [run guide](docs/run.html) explains why.
 </details>
 
 <details>
@@ -347,6 +363,7 @@ make fuzz        # fuzz the Raft wire codec
 
 | | |
 |---|---|
+| [Run guide](docs/run.html) | Docker, Compose and local setup, chaos commands, troubleshooting (HTML, [hosted](https://udogg.github.io/DistKV/run.html)) |
 | [Architecture](docs/ARCHITECTURE.md) | components, sharding, the log engine, request routing |
 | [Raft notes](docs/RAFT.md) | safety arguments for pre-vote, leases, durability and group commit |
 | [HTTP API](docs/API.md) | endpoints, headers, error codes, SSE, fault injection |

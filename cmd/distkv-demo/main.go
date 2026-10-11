@@ -251,6 +251,9 @@ func run(cfg config, logger *slog.Logger) error {
 	go sv.generateLoad(ctx)
 
 	url := "http://" + ln.Addr().String()
+	if host, port, _ := net.SplitHostPort(ln.Addr().String()); host == "0.0.0.0" || host == "::" {
+		url = "http://localhost:" + port // listening on all interfaces (e.g. in Docker)
+	}
 	fmt.Printf(`
   ╔══════════════════════════════════════════════════════════════╗
   ║  DistKV demo is running                                      ║

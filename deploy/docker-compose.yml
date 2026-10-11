@@ -14,8 +14,11 @@
 #   # chaos: partition a node (fault injection is enabled)
 #   curl -X POST localhost:7002/v1/admin/faults -d '{"isolated":true}'
 #
-# For one-click chaos buttons in the dashboard, use `make demo` instead
-# (it supervises local processes and needs no Docker).
+# Clients on the host: pass --no-smart (CLI/bench) or smart=False (SDKs),
+# because the cluster advertises container hostnames (distkv1..5).
+#
+# For one-click chaos buttons in the dashboard, use `make docker-demo` or
+# `make demo` instead. Step-by-step guide: docs/run.html
 
 x-distkv: &distkv
   build:

@@ -7,7 +7,7 @@ LDFLAGS := -s -w \
 	-X github.com/UDogg/DistKV/internal/version.Commit=$(COMMIT)
 IMAGE   ?= distkv:$(VERSION)
 
-.PHONY: all build test test-short race chaos bench fuzz lint fmt vet cover cluster cluster-stop docker compose-up compose-down clean help demo ui ui-pages polyglot sdk-python sdk-typescript sdk-rust top vectors
+.PHONY: all build test test-short race chaos bench fuzz lint fmt vet cover cluster cluster-stop docker compose-up compose-down clean help demo docker-demo ui ui-pages polyglot sdk-python sdk-typescript sdk-rust top vectors
 
 all: lint test build ## Lint, test and build
 
@@ -56,6 +56,10 @@ cluster-stop: ## Stop the local cluster
 
 docker: ## Build the container image
 	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE) .
+
+docker-demo: docker ## ⭐ Whole demo in ONE container: 5 nodes + traffic + dashboard on http://localhost:8080
+	docker run --rm -it --name distkv-demo -p 8080:8080 --entrypoint distkv-demo $(IMAGE) \
+		--listen 0.0.0.0:8080 --dir /data/demo --historian=false
 
 compose-up: ## 5 nodes + traffic + historian + Prometheus + Grafana via docker compose
 	docker compose -f deploy/docker-compose.yml up -d --build

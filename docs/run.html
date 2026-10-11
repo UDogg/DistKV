@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Running DistKV</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a field manual. Sticky route index on the left, one reading column on the right;
+   terminal blocks are the hero material because the page's job is "type these commands". */
+:root {
+  --paper: #f6f6fb;          /* page ground, faintly violet-biased neutral */
+  --sheet: #ffffff;          /* raised surfaces */
+  --ink: #171a2e;            /* body text */
+  --muted: #5b6183;          /* secondary text */
+  --rule: #dfe1ef;           /* hairlines */
+  --accent: #5b3fe0;         /* DistKV violet, darkened for light-ground contrast */
+  --accent-soft: #ece8ff;
+  --signal: #0a8fae;         /* cyan: links to live URLs and ports */
+  --ok: #138a5c;
+  --warn: #a96500;
+  --term-bg: #10132a;        /* terminals stay dark in both themes */
+  --term-fg: #e3e6ff;
+  --term-dim: #8a91c0;
+  --term-prompt: #7fe3ff;
+  --term-ok: #4fe3a6;
+  --font-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --font-body: "Figtree", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0c0e1c; --sheet: #151935; --ink: #e8eaff; --muted: #9ba2cc; --rule: #262b4f;
+    --accent: #a48bff; --accent-soft: #241d52; --signal: #4fd3f5; --ok: #42d79a; --warn: #f0b04a;
+    --term-bg: #080a17; --term-fg: #e3e6ff; --term-dim: #7e86b8; --term-prompt: #7fe3ff; --term-ok: #4fe3a6;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0c0e1c; --sheet: #151935; --ink: #e8eaff; --muted: #9ba2cc; --rule: #262b4f;
+  --accent: #a48bff; --accent-soft: #241d52; --signal: #4fd3f5; --ok: #42d79a; --warn: #f0b04a;
+  --term-bg: #080a17; --term-fg: #e3e6ff; --term-dim: #7e86b8; --term-prompt: #7fe3ff; --term-ok: #4fe3a6;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink);
+  font: 16px/1.62 var(--font-body);
+  padding-inline: 20px; padding-block: 0 64px;
+}
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+code { font-family: var(--font-mono); font-size: .88em; background: var(--accent-soft); padding: .1em .35em; border-radius: 5px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; letter-spacing: -.01em; line-height: 1.15; }
+
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 56px; }
+@media (max-width: 880px) { .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; } nav.toc { display: none; } }
+
+/* ---- header ---- */
+header.top { max-width: 1120px; margin: 0 auto; padding-block: 56px 36px; display: grid; gap: 14px; }
+.eyebrow { font: 600 12px/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+header.top h1 { font-size: clamp(36px, 6vw, 60px); font-weight: 800; margin: 0; }
+header.top p.lede { margin: 0; max-width: 62ch; color: var(--muted); font-size: 18px; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 22px; font: 13px/1.4 var(--font-mono); color: var(--muted); margin-top: 6px; }
+.facts b { color: var(--ink); font-weight: 600; }
+
+/* ---- table of contents ---- */
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; padding-top: 6px; }
+nav.toc p { font: 600 11px/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; border-left: 1px solid var(--rule); }
+nav.toc a { display: block; padding: 5px 0 5px 14px; margin-left: -1px; border-left: 2px solid transparent; color: var(--muted); text-decoration: none; font-size: 14px; }
+nav.toc a:hover { color: var(--ink); }
+nav.toc a.on { color: var(--accent); border-left-color: var(--accent); font-weight: 600; }
+
+main { min-width: 0; display: grid; gap: 56px; }
+section { min-width: 0; scroll-margin-top: 24px; }
+section > h2 { font-size: 28px; font-weight: 800; margin: 0 0 6px; }
+section > .sub { color: var(--muted); margin: 0 0 22px; max-width: 64ch; }
+h3 { font-size: 18px; font-weight: 600; margin: 28px 0 8px; }
+p { max-width: 68ch; }
+
+/* ---- route chooser ---- */
+.routes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 560px) { .routes { grid-template-columns: minmax(0, 1fr); } }
+.route {
+  display: grid; gap: 6px; padding: 18px 18px 16px; border-radius: 14px; text-decoration: none; color: var(--ink);
+  background: var(--sheet); border: 1px solid var(--rule); transition: border-color .15s ease, transform .15s ease;
+}
+.route:hover { border-color: var(--accent); transform: translateY(-1px); }
+.route .tag { font: 600 11px/1 var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+.route .tag em { font-style: normal; color: var(--accent); }
+.route h3 { margin: 4px 0 0; font-size: 19px; }
+.route p { margin: 0; color: var(--muted); font-size: 14.5px; }
+.route.primary { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* ---- steps ---- */
+ol.steps { list-style: none; counter-reset: step; margin: 0; padding: 0; display: grid; gap: 26px; }
+ol.steps > li { counter-increment: step; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 14px; }
+ol.steps > li::before {
+  content: counter(step); width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+  font: 600 13px/1 var(--font-mono); color: var(--accent); border: 1.5px solid var(--accent); margin-top: 1px;
+}
+ol.steps > li > div { min-width: 0; }
+ol.steps h4 { margin: 3px 0 6px; font: 600 16.5px/1.35 var(--font-body); }
+ol.steps p { margin: 0 0 10px; }
+
+/* ---- terminal ---- */
+.term { position: relative; background: var(--term-bg); color: var(--term-fg); border-radius: 12px; margin: 10px 0 0; }
+.term pre { margin: 0; padding: 16px 18px; overflow-x: auto; font: 13.5px/1.6 var(--font-mono); }
+.term .p { color: var(--term-prompt); user-select: none; }
+.term .c { color: var(--term-dim); }
+.term .o { color: var(--term-dim); }
+.term .ok { color: var(--term-ok); }
+.term .label { position: absolute; top: 9px; right: 62px; font: 600 10px/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--term-dim); }
+.copy {
+  position: absolute; top: 6px; right: 6px; font: 600 11.5px/1 var(--font-body); padding: 7px 10px; border-radius: 7px; cursor: pointer;
+  background: rgba(255,255,255,.08); color: var(--term-fg); border: 1px solid rgba(255,255,255,.14);
+}
+.copy:hover { background: rgba(255,255,255,.16); }
+.term.output { background: transparent; color: var(--ink); border: 1px dashed var(--rule); }
+.term.output pre { color: var(--muted); }
+.term.output .ok { color: var(--ok); }
+.term.output .label { color: var(--muted); right: 14px; }
+
+/* ---- tables ---- */
+.tbl { overflow-x: auto; border: 1px solid var(--rule); border-radius: 12px; background: var(--sheet); margin-top: 12px; }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font: 600 11px/1.2 var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+tr:last-child td { border-bottom: 0; }
+td.port { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--signal); white-space: nowrap; }
+td code { white-space: nowrap; }
+.tbl.wide-cmds td code { white-space: normal; overflow-wrap: anywhere; }
+.tbl.wide-cmds td:last-child { min-width: 180px; }
+
+/* ---- callouts ---- */
+.note { border-left: 3px solid var(--signal); padding: 4px 0 4px 16px; margin: 16px 0 0; color: var(--ink); max-width: 68ch; }
+.note.warn { border-left-color: var(--warn); }
+.note strong { font-weight: 700; }
+
+details.fix { border-top: 1px solid var(--rule); padding: 14px 0; }
+details.fix:last-of-type { border-bottom: 1px solid var(--rule); }
+details.fix summary { cursor: pointer; font-weight: 600; list-style: none; display: flex; gap: 10px; align-items: baseline; }
+details.fix summary::before { content: "+"; font-family: var(--font-mono); color: var(--accent); width: 14px; }
+details.fix[open] summary::before { content: "−"; }
+details.fix summary::-webkit-details-marker { display: none; }
+details.fix > div { padding: 8px 0 0 24px; }
+
+footer.end { max-width: 1120px; margin: 64px auto 0; padding-top: 22px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 13.5px; display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+html { scroll-behavior: smooth; }
+</style>
+</head>
+<body>
+
+
+<header class="top">
+  <span class="eyebrow">DistKV · run guide</span>
+  <h1>Run a 5-node Raft cluster on your laptop</h1>
+  <p class="lede">Four ways to get DistKV running, from one <code>docker run</code> to the full stack with
+  monitoring. Every command on this page was run and checked against a live cluster before it was written down.</p>
+  <div class="facts">
+    <span>image <b>45.6 MB</b></span><span>cold build <b>~25 s</b></span>
+    <span>nodes <b>5</b> · shards <b>24</b> · replicas <b>3</b></span><span>cost <b>$0</b></span>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="toc" aria-label="On this page">
+    <p>On this page</p>
+    <ol>
+      <li><a href="#choose">Choose a route</a></li>
+      <li><a href="#prereqs">Before you start</a></li>
+      <li><a href="#docker-run">One container</a></li>
+      <li><a href="#compose">Docker Compose stack</a></li>
+      <li><a href="#use">Talk to the cluster</a></li>
+      <li><a href="#chaos">Break things</a></li>
+      <li><a href="#local">Without Docker</a></li>
+      <li><a href="#trouble">Troubleshooting</a></li>
+      <li><a href="#cleanup">Clean up</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <section id="choose">
+      <h2>Choose a route</h2>
+      <p class="sub">All four routes run the same code. They differ in what comes along: monitoring, the history service, or nothing to install at all.</p>
+      <div class="routes">
+        <a class="route primary" href="#docker-run">
+          <span class="tag">Docker <em>fastest</em></span>
+          <h3>One container</h3>
+          <p>A single <code>docker run</code> starts 5 nodes, live traffic and the dashboard with chaos buttons.</p>
+        </a>
+        <a class="route" href="#compose">
+          <span class="tag">Docker Compose <em>most complete</em></span>
+          <h3>Full stack</h3>
+          <p>5 node containers, a load generator, the SQLite historian, Prometheus and Grafana.</p>
+        </a>
+        <a class="route" href="#local">
+          <span class="tag">Go 1.23+</span>
+          <h3>Without Docker</h3>
+          <p><code>make demo</code> runs real processes on your machine, with the history panel included.</p>
+        </a>
+        <a class="route" href="https://udogg.github.io/DistKV/">
+          <span class="tag">Browser</span>
+          <h3>Nothing to install</h3>
+          <p>The dashboard in simulation mode on GitHub Pages. Real routing code, simulated cluster.</p>
+        </a>
+      </div>
+    </section>
+
+    <section id="prereqs">
+      <h2>Before you start</h2>
+      <p class="sub">For the Docker routes you need Docker Engine 24 or newer (Docker Desktop on macOS and Windows) with the Compose v2 plugin, plus about 1 GB of free memory.</p>
+      <div class="term"><span class="label">check</span><button class="copy" type="button">Copy</button><pre><span class="p">$ </span>docker version --format '{{.Server.Version}}'
+<span class="p">$ </span>docker compose version
+<span class="p">$ </span>git clone https://github.com/UDogg/DistKV.git &amp;&amp; cd DistKV</pre></div>
+      <p class="note">Ports used by default: <code>8080</code> (single-container dashboard), <code>7001–7005</code> (nodes), <code>8090</code> (historian), <code>9090</code> (Prometheus), <code>3000</code> (Grafana). Free them or remap them, as described in <a href="#trouble">Troubleshooting</a>.</p>
+    </section>
+
+    <section id="docker-run">
+      <h2>One container</h2>
+      <p class="sub">The image ships the demo supervisor, which starts five <code>distkv</code> processes inside the container, drives traffic at them and serves the dashboard.</p>
+      <ol class="steps">
+        <li><div>
+          <h4>Build the image</h4>
+          <p>Builds every binary and the embedded dashboard. Node.js isn't needed, because the dashboard bundle is committed.</p>
+          <div class="term"><button class="copy" type="button">Copy</button><pre><span class="p">$ </span>docker build -t distkv:local .</pre></div>
+        </div></li>
+        <li><div>
+          <h4>Start the demo</h4>
+          <p>Overriding the entrypoint selects the demo supervisor. <code>--listen 0.0.0.0:8080</code> makes the dashboard reachable from outside the container.</p>
+          <div class="term"><button class="copy" type="button">Copy</button><pre><span class="p">$ </span>docker run --rm -d --name distkv-demo -p 8080:8080 \
+    --entrypoint distkv-demo distkv:local \
+    --listen 0.0.0.0:8080 --dir /data/demo --historian=false</pre></div>
+          <p class="note">The history panel stays off in this route, because the image has no Python. Use the <a href="#compose">Compose stack</a> or <a href="#local">make demo</a> to get the SQLite history.</p>
+        </div></li>
+        <li><div>
+          <h4>Open the dashboard</h4>
+          <p>Go to <a href="http://localhost:8080">http://localhost:8080</a>. After about 10 seconds every shard has a leader:</p>
+          <div class="term output"><span class="label">expected</span><pre><span class="ok">HEALTHY</span>   LIVE · SSE   DEMO
+throughput  ~800 ops/s     p99  ~3.6 ms     shards 24 / 24     nodes 5 / 5</pre></div>
+        </div></li>
+        <li><div>
+          <h4>Crash a node</h4>
+          <p>Press <b>kill -9</b> on any node card, or use the control API. Leadership of its shards moves to the survivors within about a second, and the availability tile stays at 100%.</p>
+          <div class="term"><button class="copy" type="button">Copy</button><pre><span class="p">$ </span>curl -X POST localhost:8080/demo/nodes/n3/kill
+<span class="p">$ </span>curl -s localhost:8080/demo/info | grep -o '"failed_total":[0-9]*'</pre></div>
+          <div class="term output"><span class="label">verified result</span><pre>{"node":"n3","status":"ok"}
+"failed_total":<span class="ok">0</span>          <span class="c"># 9,952 client operations, none failed</span></pre></div>
+        </div></li>
+        <li><div>
+          <h4>Stop it</h4>
+          <div class="term"><button class="copy" type="button">Copy</button><pre><span class="p">$ </span>docker stop distkv-demo</pre></div>
+        </div></li>
+      </ol>
+    </section>
+
+    <section id="compose">
+      <h2>Docker Compose stack</h2>
+      <p class="sub">Each node runs in its own container with its own volume, as it would on separate machines. A load generator keeps 1,000 ops/s flowing, so every chart has data from the start.</p>
+      <ol class="steps">
+        <li><div>
+          <h4>Start everything</h4>
+          <div class="term"><button class="copy" type="button">Copy</button><pre><span class="p">$ </span>docker compose -f deploy/docker-compose.yml up -d --build
+<span class="c"># or: make compose-up</span></pre></div>
+        </div></li>
+        <li><div>
+          <h4>Wait for healthy nodes</h4>
+          <p>Each node container has a health check that passes once every shard it hosts has a leader.</p>
+          <div class="term"><button class="copy" type="button">Copy</button><pre><span class="p">$ </span>docker compose -f deploy/docker-compose.yml ps</pre></div>
+          <div class="term output"><span class="label">expected</span><pre>distkv1     running   Up 21 seconds (<span class="ok">healthy</span>)
+distkv2     running   Up 21 seconds (<span class="ok">healthy</span>)
+…
+historian   running   Up 20 seconds
+loadgen     running   Up 20 seconds</pre></div>
+        </div></li>
+        <li><div>
+          <h4>Open the services</h4>
+          <div class="tbl"><table>
+            <thead><tr><th>Service</th><th>URL</th><th>What it shows</th></tr></thead>
+            <tbody>
+              <tr><td>Dashboard + history</td><td class="port"><a href="http://localhost:7001/ui/?historian=http://localhost:8090">localhost:7001/ui/?historian=…8090</a></td><td>Live cluster view, plus the SQLite timeline from the historian</td></tr>
+              <tr><td>Node API</td><td class="port">localhost:7001 – 7005</td><td>Each node serves the API and the dashboard</td></tr>
+              <tr><td>Grafana</td><td class="port"><a href="http://localhost:3000">localhost:3000</a></td><td>Pre-built “DistKV” dashboard, anonymous admin access</td></tr>
+              <tr><td>Prometheus</td><td class="port"><a href="http://localhost:9090">localhost:9090</a></td><td>Scrapes all five nodes, with SLO alert rules loaded</td></tr>
+              <tr><td>Historian</td><td class="port"><a href="http://localhost:8090/stats">localhost:8090/stats</a></td><td>Sample and event counts in its SQLite database</td></tr>
+            </tbody>
+          </table></div>
+          <p class="note">The dashboard here is read-only. The node containers have no supervisor to restart processes, so the chaos buttons appear only in the single-container and <code>make demo</code> routes. Under Compose, inject failures from the terminal as shown in <a href="#chaos">Break things</a>.</p>
+        </div></li>
+      </ol>
+    </section>
+
+    <section id="use">
+      <h2>Talk to the cluster</h2>
+      <p class="sub">Send requests to any node: if it doesn't lead the key's shard, it forwards the request to the node that does.</p>
+
+      <h3>curl</h3>
+      <div class="term"><button class="copy" type="button">Copy</button><pre><span class="p">$ </span>curl -X PUT 'localhost:7005/v1/kv/user:42?ttl=60s' --data alice
+<span class="p">$ </span>curl localhost:7002/v1/kv/user:42</pre></div>
+      <div class="term output"><span class="label">verified result</span><pre>{ "key": "user:42", "version": 1927, "shard": 4 }
+alice</pre></div>
+
+      <h3>The CLI, inside a container</h3>
+      <p>The images contain <code>distkvctl</code>. They have no shell, so run the binary directly:</p>
+      <div class="term"><button class="copy" type="button">Copy</button><pre><span class="p">$ </span>docker compose -f deploy/docker-compose.yml exec distkv1 \
+    distkvctl --endpoints http://localhost:7001 put greeting hello --ttl 10m
+<span class="p">$ </span>docker compose -f deploy/docker-compose.yml exec distkv1 \
+    distkvctl --endpoints http://localhost:7001 cluster</pre></div>
+
+      <h3>Clients on your host</h3>
+      <p>Smart clients normally contact shard leaders directly, using the member addresses the cluster reports. Under Compose those are container hostnames such as <code>distkv2</code>, which your host can't resolve. Turn smart routing off so requests go through the published port and the nodes forward them:</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Client</th><th>Setting</th></tr></thead>
+        <tbody>
+          <tr><td>distkvctl, distkv-bench</td><td><code>--no-smart</code></td></tr>
+          <tr><td>Go</td><td><code>client.Config{DisableSmartRouting: true}</code></td></tr>
+          <tr><td>Python</td><td><code>Client("http://localhost:7001", smart=False)</code></td></tr>
+          <tr><td>TypeScript</td><td><code>Client.connect({ endpoints, smart: false })</code></td></tr>
+        </tbody>
+      </table></div>
+      <p class="note warn">Without this setting, host clients fail with <code>lookup distkv2 … no such host</code>. The <a href="#docker-run">single-container route</a> doesn't have this problem, because all of its nodes listen on 127.0.0.1 inside one container.</p>
+    </section>
+
+    <section id="chaos">
+      <h2>Break things</h2>
+      <p class="sub">Each command below was run against the Compose stack. The status line after each one is what the cluster reported a few seconds later. <code>n3-0</code> means node n3 is down and leads 0 shards.</p>
+      <div class="tbl wide-cmds"><table>
+        <thead><tr><th>Failure</th><th>Command</th><th>Observed</th></tr></thead>
+        <tbody>
+          <tr><td>Crash a node</td><td><code>docker compose -f deploy/docker-compose.yml kill distkv3</code></td><td>24/24 shards led · n1 8 · n2 6 · <b>n3 down</b> · n4 4 · n5 6</td></tr>
+          <tr><td>Bring it back</td><td><code>docker compose -f deploy/docker-compose.yml start distkv3</code></td><td>24/24 · leaders rebalanced to 6 · 5 · 4 · 4 · 5</td></tr>
+          <tr><td>Partition a node</td><td><code>curl -X POST localhost:7002/v1/admin/faults -d '{"isolated":true}'</code></td><td>24/24 · <b>n2 isolated, leads 0</b> · others 6 each</td></tr>
+          <tr><td>Heal it</td><td><code>curl -X POST localhost:7002/v1/admin/faults -d '{}'</code></td><td>24/24 · 5 · 4 · 5 · 5 · 5</td></tr>
+          <tr><td>Packet loss</td><td><code>curl -X POST localhost:7004/v1/admin/faults -d '{"drop_percent":30,"delay_ms":5}'</code></td><td>24/24 · 0 errors · p99 rises from 2 ms to ~100 ms until healed</td></tr>
+        </tbody>
+      </table></div>
+      <p>The historian logs each change as an event. After the sequence above, it had recorded these:</p>
+      <div class="term"><button class="copy" type="button">Copy</button><pre><span class="p">$ </span>curl -s 'localhost:8090/events?limit=20'</pre></div>
+      <div class="term output"><span class="label">event counts</span><pre>leader_change 30 · shard_unavailable 5 · shard_recovered 5
+node_down 1 · node_up 1 · partitioned 1 · healed 1</pre></div>
+      <p class="note">Keep one node down at a time. With three replicas, every shard tolerates one failure. A second simultaneous failure leaves some shards without quorum, and the dashboard marks them <code>no quorum</code> until a node returns.</p>
+    </section>
+
+    <section id="local">
+      <h2>Without Docker</h2>
+      <p class="sub">Needs Go 1.23 or newer. Python 3.9+ is optional: if it's present, the history panel runs too. The nodes are real operating-system processes, so <b>kill -9</b> sends a real SIGKILL.</p>
+      <div class="term"><button class="copy" type="button">Copy</button><pre><span class="p">$ </span>make demo                <span class="c"># dashboard on http://localhost:8080</span>
+<span class="p">$ </span>make top                 <span class="c"># optional, Rust terminal monitor (needs cargo)</span></pre></div>
+      <p>Prefer the cloud? Open the repository in <a href="https://codespaces.new/UDogg/DistKV">GitHub Codespaces</a>, wait for the build, then run <code>make demo</code>. Port 8080 opens in your browser automatically.</p>
+    </section>
+
+    <section id="trouble">
+      <h2>Troubleshooting</h2>
+      <details class="fix" open>
+        <summary>“429 Too Many Requests” while pulling base images</summary>
+        <div><p>Docker Hub limits anonymous pulls per IP, and shared cloud and CI machines hit the limit often. Sign in with <code>docker login</code>, or pull the same images through Google's public mirror and tag them:</p>
+        <div class="term"><button class="copy" type="button">Copy</button><pre><span class="p">$ </span>docker pull mirror.gcr.io/library/golang:1.24-alpine &amp;&amp; docker tag mirror.gcr.io/library/golang:1.24-alpine golang:1.24-alpine
+<span class="p">$ </span>docker pull mirror.gcr.io/library/python:3.13-alpine &amp;&amp; docker tag mirror.gcr.io/library/python:3.13-alpine python:3.13-alpine
+<span class="p">$ </span>docker pull mirror.gcr.io/prom/prometheus:v2.53.0 &amp;&amp; docker tag mirror.gcr.io/prom/prometheus:v2.53.0 prom/prometheus:v2.53.0
+<span class="p">$ </span>docker pull mirror.gcr.io/grafana/grafana:11.1.0 &amp;&amp; docker tag mirror.gcr.io/grafana/grafana:11.1.0 grafana/grafana:11.1.0</pre></div>
+        <p>Then run <code>docker build</code> or <code>docker compose up</code> again. Docker uses the local tags, so neither command needs Docker Hub.</p></div>
+      </details>
+      <details class="fix">
+        <summary>A port is already in use</summary>
+        <div><p>Change the host side of a mapping. For the single container, use <code>-p 9080:8080</code> and open <code>localhost:9080</code>. Under Compose, edit the <code>ports:</code> lines in <code>deploy/docker-compose.yml</code>, for example <code>"17001:7001"</code>.</p></div>
+      </details>
+      <details class="fix">
+        <summary>Nodes stay “unhealthy”</summary>
+        <div><p>A node turns healthy once every shard it hosts has a leader, which takes a majority of the 5 nodes. Check that all node containers are running, then look at a node's logs:</p>
+        <div class="term"><button class="copy" type="button">Copy</button><pre><span class="p">$ </span>docker compose -f deploy/docker-compose.yml logs distkv1 | tail -20</pre></div>
+        <p>If you changed <code>DISTKV_SHARDS</code> or the member list on an existing cluster, the nodes refuse to start, to protect data placement. Remove the volumes with <code>down -v</code> and start again.</p></div>
+      </details>
+      <details class="fix">
+        <summary>Dashboard shows “Simulation mode” instead of live data</summary>
+        <div><p>The dashboard falls back to simulation when it can't reach <code>/v1/cluster</code> within 2.5 seconds. Make sure you opened a node's address (<code>:7001/ui/</code>) or the demo's (<code>:8080</code>), and not a file on disk.</p></div>
+      </details>
+      <details class="fix">
+        <summary>Apple Silicon and ARM machines</summary>
+        <div><p>Nothing special is needed. The image builds natively for your architecture, and released images on GHCR are multi-arch (<code>linux/amd64</code>, <code>linux/arm64</code>).</p></div>
+      </details>
+    </section>
+
+    <section id="cleanup">
+      <h2>Clean up</h2>
+      <div class="term"><button class="copy" type="button">Copy</button><pre><span class="p">$ </span>docker stop distkv-demo                                  <span class="c"># single container</span>
+<span class="p">$ </span>docker compose -f deploy/docker-compose.yml down -v       <span class="c"># Compose, including volumes</span>
+<span class="p">$ </span>docker image rm distkv:local</pre></div>
+      <p class="note"><code>down</code> without <code>-v</code> keeps the node and history volumes. The next <code>up</code> then resumes the same cluster from its write-ahead logs, and the historian's timeline continues where it stopped.</p>
+    </section>
+  </main>
+</div>
+
+<footer class="end">
+  <span>DistKV · Apache 2.0 · Go, TypeScript, Python, Rust</span>
+  <span>Architecture, API and benchmarks are in <code>docs/</code> in the repository.</span>
+</footer>
+
+<script>
+document.querySelectorAll(".term").forEach(function (term) {
+  var btn = term.querySelector(".copy");
+  if (!btn) return;
+  btn.addEventListener("click", function () {
+    // Copy only the commands: drop prompts and comment-only lines.
+    var text = term.querySelector("pre").innerText.split("\n")
+      .map(function (l) { return l.replace(/^\$ /, ""); })
+      .filter(function (l) { return !/^#/.test(l.trim()); })
+      .join("\n").trim();
+    var done = function (label) { btn.textContent = label; setTimeout(function () { btn.textContent = "Copy"; }, 1600); };
+    var fallback = function () {
+      var r = document.createRange(); r.selectNodeContents(term.querySelector("pre"));
+      var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); done("Press ⌘/Ctrl+C");
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { done("Copied"); }, fallback);
+    } else { fallback(); }
+  });
+});
+// Highlight the section in view.
+var links = Array.prototype.slice.call(document.querySelectorAll("nav.toc a"));
+if ("IntersectionObserver" in window) {
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      links.forEach(function (a) { a.classList.toggle("on", a.getAttribute("href") === "#" + e.target.id); });
+    });
+  }, { rootMargin: "-20% 0px -70% 0px" });
+  document.querySelectorAll("main section").forEach(function (s) { io.observe(s); });
+}
+</script>
+
+</body>
+</html>

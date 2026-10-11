@@ -6,7 +6,7 @@ name: Pages
 on:
   push:
     branches: [main]
-    paths: ["web/**", "clients/typescript/src/**", ".github/workflows/pages.yml"]
+    paths: ["web/**", "clients/typescript/src/**", "docs/run.html", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -31,6 +31,8 @@ jobs:
           node-version: 22
       - run: npm ci --prefix web/dashboard
       - run: npm run pages --prefix web/dashboard
+      - name: Add the run guide (https://<owner>.github.io/DistKV/run.html)
+        run: cp docs/run.html dist-pages/run.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist-pages

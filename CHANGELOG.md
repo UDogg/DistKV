@@ -17,6 +17,17 @@
 - 5-node Compose stack with load generator and historian; Codespaces devcontainer; Pages,
   Polyglot, Release and CodeQL workflows; Dependabot; issue and PR templates.
 
+### Docker
+- The image now includes `distkv-demo`: the whole 5-node demo runs from one `docker run`
+  (`make docker-demo`).
+- Fixed: `/data` was root-owned while the server runs as non-root, so a fresh named volume
+  was not writable. The image now creates `/data` owned by uid 65532.
+- Verified end to end: the image (45.6 MB), the single-container demo, and the Compose stack
+  (health checks, historian, Prometheus targets, Grafana provisioning, kill/start/partition/
+  packet loss, persistence across `down`/`up`).
+- `docs/run.html`: an HTML run guide, also published on GitHub Pages.
+- The demo prints `http://localhost:PORT` when listening on all interfaces.
+
 ### Fixed
 - Preferred leaders are now balanced. Pure rendezvous ranking left one of 5 nodes preferred for
   none of 24 shards, idling a fifth of the cluster's write capacity. Routing vectors regenerated.
