@@ -154,7 +154,9 @@ func Run(ctx context.Context, c *client.Client, cfg Config) *Report {
 	cfg = withDefaults(cfg)
 	rep := &Report{Config: cfg, Reads: histogram.New(), Writes: histogram.New(), All: histogram.New()}
 	val := make([]byte, cfg.ValueSize)
-	rand.Read(val)
+	for i := range val {
+		val[i] = 'a' + byte(i%26)
+	}
 
 	var ops, errs atomic.Uint64
 	var secOps, secErrs atomic.Uint64
@@ -290,7 +292,7 @@ func Run(ctx context.Context, c *client.Client, cfg Config) *Report {
 			select {
 			case <-runCtx.Done():
 				break schedule
-			case <-time.After(next.Sub(time.Now())):
+			case <-time.After(time.Until(next)):
 			}
 		}
 		close(jobs)

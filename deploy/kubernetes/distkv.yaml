@@ -1,0 +1,125 @@
+# DistKV on Kubernetes: a 3-node StatefulSet with stable identities and
+# persistent volumes.
+#
+#   kubectl apply -f deploy/kubernetes/distkv.yaml
+#   kubectl port-forward svc/distkv 7001:7001
+#   distkvctl --no-smart cluster
+#
+# Node IDs are pod names (distkv-0, distkv-1, distkv-2) and peers are
+# addressed through the headless service. The member list is static: to
+# change cluster size, deploy a new cluster and migrate.
+apiVersion: v1
+kind: Service
+metadata:
+  name: distkv-peers
+  labels: { app.kubernetes.io/name: distkv }
+spec:
+  clusterIP: None
+  # Peers must resolve each other before they are Ready, otherwise no
+  # shard could ever elect a leader.
+  publishNotReadyAddresses: true
+  selector: { app.kubernetes.io/name: distkv }
+  ports:
+    - { name: http, port: 7001 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: distkv
+  labels: { app.kubernetes.io/name: distkv }
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "7001"
+spec:
+  selector: { app.kubernetes.io/name: distkv }
+  ports:
+    - { name: http, port: 7001 }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: distkv
+data:
+  DISTKV_MEMBERS: >-
+    distkv-0=distkv-0.distkv-peers:7001,distkv-1=distkv-1.distkv-peers:7001,distkv-2=distkv-2.distkv-peers:7001
+  DISTKV_SHARDS: "16"
+  DISTKV_REPLICATION: "3"
+  DISTKV_LISTEN: ":7001"
+  DISTKV_DATA_DIR: /data
+  DISTKV_LOG_FORMAT: json
+  DISTKV_MAX_BYTES_PER_SHARD: "268435456" # 256 MiB per shard
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: distkv
+  labels: { app.kubernetes.io/name: distkv }
+spec:
+  serviceName: distkv-peers
+  replicas: 3
+  # Start all pods together: a lone pod can never become ready.
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels: { app.kubernetes.io/name: distkv }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: distkv }
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 65532
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app.kubernetes.io/name: distkv }
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: distkv
+          image: ghcr.io/udogg/distkv:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: { name: distkv }
+          env:
+            - name: DISTKV_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+          ports:
+            - { name: http, containerPort: 7001 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests: { cpu: "1", memory: 1Gi }
+            limits: { memory: 6Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: { storage: 10Gi }
+---
+# At most one replica down at a time keeps every shard's quorum (RF=3)
+# during voluntary disruptions such as node drains.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: distkv
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: distkv }

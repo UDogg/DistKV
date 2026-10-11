@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	cryptorand "crypto/rand"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -75,7 +76,10 @@ type Config struct {
 	// DisableSessions turns off exactly-once write deduplication. Writes
 	// are then only retried when the request certainly was not sent.
 	DisableSessions bool
-	// HTTPClient overrides the default tuned client.
+	// TLS configures HTTPS (endpoints must then use https://). Set
+	// Certificates for clusters that require client certificates.
+	TLS *tls.Config
+	// HTTPClient overrides the default tuned client (TLS is then ignored).
 	HTTPClient *http.Client
 }
 
@@ -119,7 +123,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	}
 	c := &Client{cfg: cfg, http: cfg.HTTPClient, leaders: map[cluster.ShardID]string{}}
 	if c.http == nil {
-		c.http = transport.NewHTTPClient()
+		c.http = transport.NewHTTPClient(cfg.TLS)
 	}
 	if !cfg.DisableSessions {
 		var b [8]byte

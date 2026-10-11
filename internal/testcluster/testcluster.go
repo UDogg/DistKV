@@ -5,6 +5,7 @@ package testcluster
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/UDogg/DistKV/internal/cluster"
 	"github.com/UDogg/DistKV/internal/server"
+	"github.com/UDogg/DistKV/internal/tlsutil"
 	"github.com/UDogg/DistKV/pkg/client"
 )
 
@@ -31,6 +33,8 @@ type Options struct {
 	ElectionTimeout   time.Duration
 	SnapshotThreshold uint64
 	RebalanceInterval time.Duration
+	// TLS runs the cluster over HTTPS with mutual TLS between nodes.
+	TLS bool
 }
 
 // Cluster is a running in-process cluster.
@@ -39,6 +43,11 @@ type Cluster struct {
 	opts    Options
 	spec    cluster.Spec
 	dataDir string
+
+	// TLSFiles is the generated PKI when Options.TLS is set.
+	TLSFiles  tlsutil.Files
+	serverTLS *tls.Config
+	peerTLS   *tls.Config
 
 	mu      sync.Mutex
 	servers map[cluster.NodeID]*server.Server
@@ -69,6 +78,21 @@ func Start(t testing.TB, opts Options) *Cluster {
 		addrs:   map[cluster.NodeID]string{},
 		done:    map[cluster.NodeID]chan struct{}{},
 	}
+	scheme := "http://"
+	if opts.TLS {
+		scheme = "https://"
+		files, err := tlsutil.GenerateDevPKI(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.TLSFiles = files
+		if c.serverTLS, err = tlsutil.ServerConfig(files, false); err != nil {
+			t.Fatal(err)
+		}
+		if c.peerTLS, err = tlsutil.ClientConfig(files); err != nil {
+			t.Fatal(err)
+		}
+	}
 	listeners := map[cluster.NodeID]net.Listener{}
 	for i := 1; i <= opts.Nodes; i++ {
 		id := cluster.NodeID(fmt.Sprintf("n%d", i))
@@ -78,7 +102,7 @@ func Start(t testing.TB, opts Options) *Cluster {
 		}
 		listeners[id] = l
 		c.addrs[id] = l.Addr().String()
-		c.spec.Members = append(c.spec.Members, cluster.Member{ID: id, Addr: "http://" + l.Addr().String()})
+		c.spec.Members = append(c.spec.Members, cluster.Member{ID: id, Addr: scheme + l.Addr().String()})
 	}
 	c.spec.Shards = opts.Shards
 	c.spec.ReplicationFactor = opts.ReplicationFactor
@@ -104,6 +128,8 @@ func (c *Cluster) launch(id cluster.NodeID, l net.Listener) {
 		SnapshotThreshold: c.opts.SnapshotThreshold,
 		RebalanceInterval: c.opts.RebalanceInterval,
 		RequestTimeout:    2 * time.Second,
+		TLS:               c.serverTLS,
+		PeerTLS:           c.peerTLS,
 		Logger:            slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})),
 	}
 	if c.opts.Persistent {
@@ -155,7 +181,15 @@ func (c *Cluster) Client() *client.Client {
 	c.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cl, err := client.New(ctx, client.Config{Endpoints: c.Endpoints(), Timeout: 5 * time.Second})
+	var tlsCfg *tls.Config
+	if c.opts.TLS {
+		// Applications verify the servers but present no certificate.
+		var err error
+		if tlsCfg, err = tlsutil.ClientConfig(tlsutil.Files{CAFile: c.TLSFiles.CAFile}); err != nil {
+			c.t.Fatal(err)
+		}
+	}
+	cl, err := client.New(ctx, client.Config{Endpoints: c.Endpoints(), Timeout: 5 * time.Second, TLS: tlsCfg})
 	if err != nil {
 		c.t.Fatalf("client: %v", err)
 	}

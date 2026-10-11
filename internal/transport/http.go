@@ -12,6 +12,7 @@ package transport
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -49,10 +50,11 @@ type HTTP struct {
 }
 
 // NewHTTPClient returns an http.Client tuned for low-latency intra-cluster
-// traffic.
-func NewHTTPClient() *http.Client {
+// traffic. tlsCfg may be nil for plain HTTP.
+func NewHTTPClient(tlsCfg *tls.Config) *http.Client {
 	tr := &http.Transport{
-		Proxy: nil,
+		TLSClientConfig: tlsCfg,
+		Proxy:           nil,
 		DialContext: (&net.Dialer{
 			Timeout:   2 * time.Second,
 			KeepAlive: 30 * time.Second,
@@ -66,10 +68,12 @@ func NewHTTPClient() *http.Client {
 	return &http.Client{Transport: tr}
 }
 
-// NewHTTP returns a transport that resolves peers with resolve.
-func NewHTTP(resolve Resolver) *HTTP {
+// NewHTTP returns a transport that resolves peers with resolve. tlsCfg
+// (nil for plain HTTP) should carry this node's certificate when peers
+// require mutual TLS.
+func NewHTTP(resolve Resolver, tlsCfg *tls.Config) *HTTP {
 	return &HTTP{
-		client:  NewHTTPClient(),
+		client:  NewHTTPClient(tlsCfg),
 		resolve: resolve,
 		bufs:    sync.Pool{New: func() any { b := make([]byte, 0, 4096); return &b }},
 	}

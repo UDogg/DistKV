@@ -9,7 +9,8 @@
 #   scripts/cluster.sh clean                         # stop and wipe data
 #
 # Environment: BASE_PORT (default 7001), CLUSTER_DIR (default ./.cluster),
-# EXTRA_FLAGS (passed to every node, e.g. "--no-sync").
+# EXTRA_FLAGS (passed to every node, e.g. "--no-sync"), TLS=1 (generate a dev
+# CA and run with mutual TLS between nodes).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -17,12 +18,29 @@ DIR="${CLUSTER_DIR:-$ROOT/.cluster}"
 BASE_PORT="${BASE_PORT:-7001}"
 BIN="$ROOT/bin"
 
+SCHEME=http
+[[ "${TLS:-}" == 1 ]] && SCHEME=https
+
 members() {
   local n=$1 out=""
   for i in $(seq 1 "$n"); do
-    out+="n$i=127.0.0.1:$((BASE_PORT + i - 1)),"
+    out+="n$i=$SCHEME://127.0.0.1:$((BASE_PORT + i - 1)),"
   done
   echo "${out%,}"
+}
+
+tls_flags() {
+  [[ -f "$DIR/certs/ca.pem" ]] || return 0
+  echo "--tls-cert $DIR/certs/node.pem --tls-key $DIR/certs/node-key.pem --tls-ca $DIR/certs/ca.pem"
+}
+
+ctl() {
+  local scheme=http extra=()
+  if [[ -f "$DIR/certs/ca.pem" ]]; then
+    scheme=https
+    extra=(--ca "$DIR/certs/ca.pem")
+  fi
+  "$BIN/distkvctl" --endpoints "$scheme://127.0.0.1:$BASE_PORT" ${extra[@]+"${extra[@]}"} "$@"
 }
 
 start_node() {
@@ -32,7 +50,7 @@ start_node() {
   source "$cfg"
   mkdir -p "$DIR/$id"
   nohup "$BIN/distkv" --id "$id" --members "$MEMBERS" --shards "$SHARDS" \
-    --data-dir "$DIR/$id/data" ${EXTRA_FLAGS:-} >"$DIR/$id/node.log" 2>&1 &
+    --data-dir "$DIR/$id/data" $(tls_flags) ${EXTRA_FLAGS:-} >"$DIR/$id/node.log" 2>&1 &
   echo $! >"$DIR/$id/pid"
   echo "started $id (pid $!, log $DIR/$id/node.log)"
 }
@@ -43,13 +61,16 @@ start)
   SHARDS=${3:-16}
   (cd "$ROOT" && go build -o "$BIN/" ./cmd/...)
   mkdir -p "$DIR"
+  if [[ "${TLS:-}" == 1 ]]; then
+    "$BIN/distkvctl" dev-certs "$DIR/certs" >/dev/null
+  fi
   printf 'MEMBERS=%q\nSHARDS=%q\nNODES=%q\n' "$(members "$NODES")" "$SHARDS" "$NODES" >"$DIR/cluster.env"
   for i in $(seq 1 "$NODES"); do start_node "n$i"; done
   echo -n "waiting for cluster to become ready"
   for _ in $(seq 1 100); do
     ok=1
     for i in $(seq 1 "$NODES"); do
-      curl -sf "http://127.0.0.1:$((BASE_PORT + i - 1))/readyz" >/dev/null || ok=0
+      BASE_PORT=$((BASE_PORT + i - 1)) ctl health >/dev/null 2>&1 || ok=0
     done
     [[ $ok == 1 ]] && { echo " ok"; exit 0; }
     echo -n "."
@@ -73,7 +94,7 @@ restart)
   start_node "$2"
   ;;
 status)
-  "$BIN/distkvctl" --endpoints "http://127.0.0.1:$BASE_PORT" cluster
+  ctl cluster
   ;;
 clean)
   "$0" stop || true

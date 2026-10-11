@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/UDogg/DistKV/internal/loadgen"
+	"github.com/UDogg/DistKV/internal/tlsutil"
 	"github.com/UDogg/DistKV/pkg/client"
 )
 
@@ -36,13 +38,26 @@ func main() {
 	noSmart := flag.Bool("no-smart", false, "send requests via the endpoints instead of directly to leaders")
 	asJSON := flag.Bool("json", false, "emit a JSON summary")
 	quiet := flag.Bool("quiet", false, "suppress per-second progress")
+	var tlsFiles tlsutil.Files
+	flag.StringVar(&tlsFiles.CAFile, "ca", "", "TLS CA bundle")
+	flag.StringVar(&tlsFiles.CertFile, "cert", "", "TLS client certificate (mutual TLS)")
+	flag.StringVar(&tlsFiles.KeyFile, "key", "", "TLS client key")
 	flag.Parse()
+
+	var tlsCfg *tls.Config
+	if tlsFiles.Enabled() {
+		var err error
+		if tlsCfg, err = tlsutil.ClientConfig(tlsFiles); err != nil {
+			fmt.Fprintln(os.Stderr, "tls:", err)
+			os.Exit(1)
+		}
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
 	setup, setupCancel := context.WithTimeout(ctx, 10*time.Second)
-	c, err := client.New(setup, client.Config{Endpoints: strings.Split(*endpoints, ","), DisableSmartRouting: *noSmart})
+	c, err := client.New(setup, client.Config{Endpoints: strings.Split(*endpoints, ","), DisableSmartRouting: *noSmart, TLS: tlsCfg})
 	setupCancel()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "connect:", err)

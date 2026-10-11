@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/UDogg/DistKV/internal/cluster"
 	"github.com/UDogg/DistKV/internal/server"
+	"github.com/UDogg/DistKV/internal/tlsutil"
 	"github.com/UDogg/DistKV/internal/version"
 )
 
@@ -52,6 +54,10 @@ type options struct {
 	LogLevel          string
 	LogFormat         string
 	Pprof             bool
+	TLSCert           string
+	TLSKey            string
+	TLSCA             string
+	TLSClientAuth     bool
 }
 
 func main() {
@@ -87,6 +93,10 @@ func run() error {
 	fs.StringVar(&o.LogLevel, "log-level", "info", "debug | info | warn | error")
 	fs.StringVar(&o.LogFormat, "log-format", "text", "text | json")
 	fs.BoolVar(&o.Pprof, "pprof", false, "expose /debug/pprof")
+	fs.StringVar(&o.TLSCert, "tls-cert", "", "PEM certificate for HTTPS (also presented to peers)")
+	fs.StringVar(&o.TLSKey, "tls-key", "", "PEM private key for --tls-cert")
+	fs.StringVar(&o.TLSCA, "tls-ca", "", "PEM CA bundle: verifies peers and enables mutual TLS for Raft/admin endpoints")
+	fs.BoolVar(&o.TLSClientAuth, "tls-client-auth", false, "require client certificates on every connection (incl. the KV API)")
 
 	// Config file first, then environment, then flags.
 	_ = fs.Parse(os.Args[1:])
@@ -151,6 +161,21 @@ func run() error {
 		dataDir = ""
 	}
 
+	var serverTLS, peerTLS *tls.Config
+	if files := (tlsutil.Files{CertFile: o.TLSCert, KeyFile: o.TLSKey, CAFile: o.TLSCA}); files.Enabled() {
+		if serverTLS, err = tlsutil.ServerConfig(files, o.TLSClientAuth); err != nil {
+			return err
+		}
+		if peerTLS, err = tlsutil.ClientConfig(files); err != nil {
+			return err
+		}
+		for _, m := range members {
+			if !strings.HasPrefix(m.Addr, "https://") {
+				return fmt.Errorf("TLS is enabled but member %s has a non-https address %q", m.ID, m.Addr)
+			}
+		}
+	}
+
 	srv, err := server.New(server.Config{
 		NodeID: cluster.NodeID(o.ID),
 		Spec: cluster.Spec{
@@ -170,6 +195,8 @@ func run() error {
 		RequestTimeout:    o.RequestTimeout,
 		RebalanceInterval: o.Rebalance,
 		EnablePprof:       o.Pprof,
+		TLS:               serverTLS,
+		PeerTLS:           peerTLS,
 		Logger:            logger,
 	})
 	if err != nil {

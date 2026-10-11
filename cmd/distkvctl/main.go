@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -22,6 +23,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/UDogg/DistKV/internal/tlsutil"
+	"github.com/UDogg/DistKV/internal/transport"
 	"github.com/UDogg/DistKV/internal/version"
 	"github.com/UDogg/DistKV/pkg/client"
 )
@@ -38,12 +41,15 @@ Commands:
   del <key>                             delete a key
   cluster [--json]                      show shard leaders and node health
   transfer-leader <shard> [<node>]      move a shard's leadership
+  health                                exit 0 iff the first endpoint is ready
+  dev-certs <dir> [host...]             generate a throwaway CA + node certificate (dev/test)
   version                               print version
 
 Global flags:
   --endpoints  comma-separated node URLs (env DISTKV_ENDPOINTS, default http://127.0.0.1:7001)
   --timeout    per-command timeout (default 5s)
   --no-smart   route through the endpoint instead of directly to leaders
+  --ca, --cert, --key   TLS: CA bundle, and client certificate/key for mutual TLS
 `
 
 func main() {
@@ -66,9 +72,21 @@ func run(args []string) error {
 	endpoints := global.String("endpoints", defEndpoints, "")
 	timeout := global.Duration("timeout", 5*time.Second, "")
 	noSmart := global.Bool("no-smart", false, "")
+	tlsFiles := tlsutil.Files{}
+	global.StringVar(&tlsFiles.CAFile, "ca", os.Getenv("DISTKV_CA"), "")
+	global.StringVar(&tlsFiles.CertFile, "cert", os.Getenv("DISTKV_CERT"), "")
+	global.StringVar(&tlsFiles.KeyFile, "key", os.Getenv("DISTKV_KEY"), "")
 	if err := global.Parse(args); err != nil {
 		return err
 	}
+	var tlsCfg *tls.Config
+	if tlsFiles.Enabled() {
+		var err error
+		if tlsCfg, err = tlsutil.ClientConfig(tlsFiles); err != nil {
+			return err
+		}
+	}
+	httpClient := transport.NewHTTPClient(tlsCfg)
 	rest := global.Args()
 	if len(rest) == 0 {
 		global.Usage()
@@ -79,15 +97,43 @@ func run(args []string) error {
 		fmt.Println("distkvctl", version.String())
 		return nil
 	}
+	if cmd == "dev-certs" {
+		if len(rest) < 1 {
+			return errors.New("usage: dev-certs <dir> [host...]")
+		}
+		if err := os.MkdirAll(rest[0], 0o755); err != nil {
+			return err
+		}
+		f, err := tlsutil.GenerateDevPKI(rest[0], rest[1:]...)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("CA:          %s\ncertificate: %s\nkey:         %s\n", f.CAFile, f.CertFile, f.KeyFile)
+		fmt.Println("These are for development only: the same certificate serves every node and client.")
+		return nil
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	eps := strings.Split(*endpoints, ",")
 
 	if cmd == "transfer-leader" {
-		return transferLeader(ctx, eps, rest)
+		return transferLeader(ctx, eps, rest, httpClient)
 	}
-	c, err := client.New(ctx, client.Config{Endpoints: eps, Timeout: *timeout, DisableSmartRouting: *noSmart})
+	if cmd == "health" {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(eps[0], "/")+"/readyz", nil)
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return err
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("not ready: %s", resp.Status)
+		}
+		fmt.Println("ready")
+		return nil
+	}
+	c, err := client.New(ctx, client.Config{Endpoints: eps, Timeout: *timeout, DisableSmartRouting: *noSmart, HTTPClient: httpClient})
 	if err != nil {
 		return err
 	}
@@ -202,11 +248,11 @@ func run(args []string) error {
 	return nil
 }
 
-func transferLeader(ctx context.Context, eps []string, args []string) error {
+func transferLeader(ctx context.Context, eps []string, args []string, httpClient *http.Client) error {
 	if len(args) < 1 {
 		return errors.New("usage: transfer-leader <shard> [<node>]")
 	}
-	c, err := client.New(ctx, client.Config{Endpoints: eps})
+	c, err := client.New(ctx, client.Config{Endpoints: eps, HTTPClient: httpClient})
 	if err != nil {
 		return err
 	}
@@ -227,7 +273,7 @@ func transferLeader(ctx context.Context, eps []string, args []string) error {
 		u += "?to=" + args[1]
 	}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, u, nil)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}

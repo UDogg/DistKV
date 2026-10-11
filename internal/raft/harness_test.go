@@ -20,13 +20,12 @@ import (
 var errUnreachable = errors.New("network: unreachable")
 
 type network struct {
-	mu          sync.Mutex
-	nodes       map[NodeID]*Node
-	cut         map[[2]NodeID]bool // directed links that drop traffic
-	unreliable  bool
-	rng         *rand.Rand
-	rpcCount    int
-	longReorder bool
+	mu         sync.Mutex
+	nodes      map[NodeID]*Node
+	cut        map[[2]NodeID]bool // directed links that drop traffic
+	unreliable bool
+	rng        *rand.Rand
+	rpcCount   int
 }
 
 func newNetwork() *network {

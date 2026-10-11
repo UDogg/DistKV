@@ -38,11 +38,6 @@ func (l *raftLog) term(i uint64) (uint64, bool) {
 	return l.entries[i-base].Term, true
 }
 
-// entry returns the entry at index i, which must be in [firstIndex, lastIndex].
-func (l *raftLog) entry(i uint64) Entry {
-	return l.entries[i-l.entries[0].Index]
-}
-
 // slice returns entries in [lo, hi). The result aliases the log's backing
 // array and must not be modified.
 func (l *raftLog) slice(lo, hi uint64) []Entry {

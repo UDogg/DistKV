@@ -115,13 +115,12 @@ func step(s register, op *Op) (bool, register) {
 }
 
 type entry struct {
-	op       int
-	isCall   bool
-	time     int64
-	match    *entry // call <-> return
-	prev     *entry
-	next     *entry
-	unlifted bool
+	op     int
+	isCall bool
+	time   int64
+	match  *entry // call <-> return
+	prev   *entry
+	next   *entry
 }
 
 func checkKey(ops []Op, maxSteps int) (ok bool, complete bool) {

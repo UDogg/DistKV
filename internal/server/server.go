@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/UDogg/DistKV/internal/api"
 	"github.com/UDogg/DistKV/internal/cluster"
 	"github.com/UDogg/DistKV/internal/kv"
 	"github.com/UDogg/DistKV/internal/raft"
@@ -63,6 +65,14 @@ type Config struct {
 	// ExpiryInterval controls how often leaders advance the replicated
 	// clock on idle shards so expired keys are reclaimed.
 	ExpiryInterval time.Duration
+
+	// TLS, if set, serves HTTPS. If TLS.ClientCAs is set, the Raft and
+	// admin endpoints additionally require a verified client certificate
+	// (mutual TLS between nodes).
+	TLS *tls.Config
+	// PeerTLS configures outbound connections to other nodes (Raft RPCs,
+	// forwarding, status aggregation). Member addresses must use https://.
+	PeerTLS *tls.Config
 
 	EnablePprof bool
 	Logger      *slog.Logger
@@ -163,14 +173,14 @@ func New(cfg Config) (*Server, error) {
 		self:        self,
 		logger:      cfg.Logger.With("node", string(cfg.NodeID)),
 		groups:      make(map[cluster.ShardID]*group),
-		client:      transport.NewHTTPClient(),
+		client:      transport.NewHTTPClient(cfg.PeerTLS),
 		leaderHints: make(map[cluster.ShardID]cluster.NodeID),
 		stopBg:      make(chan struct{}),
 	}
 	s.transport = transport.NewHTTP(func(id raft.NodeID) (string, bool) {
 		m, ok := topo.Member(cluster.NodeID(id))
 		return m.Addr, ok
-	})
+	}, cfg.PeerTLS)
 
 	if cfg.DataDir != "" {
 		if err := s.checkFingerprint(); err != nil {
@@ -266,6 +276,9 @@ func (s *Server) Serve(l net.Listener) error {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 		ErrorLog:          slog.NewLogLogger(s.logger.Handler(), slog.LevelDebug),
+	}
+	if s.cfg.TLS != nil {
+		l = tls.NewListener(l, s.cfg.TLS)
 	}
 	for _, g := range s.groups {
 		g.node.Start()
@@ -475,17 +488,18 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE /v1/kv/{key...}", s.instrument("delete", s.handleDelete))
 	mux.HandleFunc("GET /v1/cluster", s.handleCluster)
 	mux.HandleFunc("GET /v1/status", s.handleLocalStatus)
-	mux.HandleFunc("POST /v1/admin/shards/{shard}/transfer-leader", s.handleTransfer)
+	mux.HandleFunc("POST /v1/admin/shards/{shard}/transfer-leader", s.peerOnly(s.handleTransfer))
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	mux.Handle("GET /metrics", s.m.reg.Handler())
-	mux.Handle(transport.Pattern, transport.NewHandler(func(shard cluster.ShardID) (*raft.Node, bool) {
+	raftHandler := transport.NewHandler(func(shard cluster.ShardID) (*raft.Node, bool) {
 		g, ok := s.groups[shard]
 		if !ok {
 			return nil, false
 		}
 		return g.node, true
-	}))
+	})
+	mux.Handle(transport.Pattern, s.peerOnly(raftHandler.ServeHTTP))
 	if s.cfg.EnablePprof {
 		mux.HandleFunc("/debug/pprof/", pprof.Index)
 		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -494,6 +508,23 @@ func (s *Server) routes() http.Handler {
 		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	}
 	return mux
+}
+
+// peerOnly restricts a handler to callers holding a certificate signed by
+// the cluster CA when mutual TLS is configured. Without a client CA it is
+// a no-op (protect such deployments at the network layer).
+func (s *Server) peerOnly(h http.HandlerFunc) http.HandlerFunc {
+	if s.cfg.TLS == nil || s.cfg.TLS.ClientCAs == nil {
+		return h
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 {
+			writeError(w, http.StatusForbidden, api.ErrorResponse{
+				Error: "this endpoint requires a client certificate signed by the cluster CA", Code: "forbidden"})
+			return
+		}
+		h(w, r)
+	}
 }
 
 // IsShardLeader reports whether this node currently leads shard.

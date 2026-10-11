@@ -1,0 +1,70 @@
+# A three-node DistKV cluster with Prometheus and Grafana.
+#
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#   curl -X PUT localhost:7001/v1/kv/hello -d world
+#   curl localhost:7002/v1/kv/hello
+#   open http://localhost:3000   (Grafana, anonymous access, "DistKV" dashboard)
+#
+# Node addresses use container DNS names, so use the smart client from
+# inside the compose network, or pass --no-smart to distkvctl/distkv-bench
+# from the host (requests are then forwarded server-side).
+
+x-distkv: &distkv
+  build:
+    context: ..
+  image: distkv:local
+  restart: unless-stopped
+  stop_grace_period: 20s
+  environment: &env
+    DISTKV_MEMBERS: n1=distkv1:7001,n2=distkv2:7001,n3=distkv3:7001
+    DISTKV_SHARDS: "16"
+    DISTKV_REPLICATION: "3"
+    DISTKV_LISTEN: ":7001"
+    DISTKV_DATA_DIR: /data
+    DISTKV_LOG_FORMAT: json
+  healthcheck:
+    test: ["CMD", "/usr/local/bin/distkvctl", "--endpoints", "http://localhost:7001", "health"]
+    interval: 10s
+    timeout: 3s
+
+services:
+  distkv1:
+    <<: *distkv
+    hostname: distkv1
+    environment: { <<: *env, DISTKV_ID: n1 }
+    ports: ["7001:7001"]
+    volumes: ["distkv1:/data"]
+  distkv2:
+    <<: *distkv
+    hostname: distkv2
+    environment: { <<: *env, DISTKV_ID: n2 }
+    ports: ["7002:7001"]
+    volumes: ["distkv2:/data"]
+  distkv3:
+    <<: *distkv
+    hostname: distkv3
+    environment: { <<: *env, DISTKV_ID: n3 }
+    ports: ["7003:7001"]
+    volumes: ["distkv3:/data"]
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]
+
+volumes:
+  distkv1:
+  distkv2:
+  distkv3:
