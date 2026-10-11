@@ -115,7 +115,36 @@ func New(spec Spec) (*Topology, error) {
 	for s := 0; s < spec.Shards; s++ {
 		t.replicas[s] = t.rendezvous(ShardID(s), spec.ReplicationFactor)
 	}
+	t.balancePreferred()
 	return t, nil
+}
+
+// balancePreferred chooses each shard's preferred leader (moved to the
+// front of its replica list) so that preferred leaderships are spread as
+// evenly as the replica sets allow. Pure rendezvous ranking is uniform only
+// in expectation: with few shards a node can end up preferred for none
+// (e.g. 24 shards on 5 nodes), wasting its write capacity. Greedy: walk the
+// shards in order and prefer the replica with the fewest preferred shards
+// so far, breaking ties by rendezvous rank. Deterministic, so every node
+// and client computes the same result.
+func (t *Topology) balancePreferred() {
+	count := make(map[NodeID]int, len(t.spec.Members))
+	for s, reps := range t.replicas {
+		best := 0
+		for i := 1; i < len(reps); i++ {
+			if count[reps[i]] < count[reps[best]] {
+				best = i
+			}
+		}
+		if best != 0 {
+			reordered := make([]NodeID, 0, len(reps))
+			reordered = append(reordered, reps[best])
+			reordered = append(reordered, reps[:best]...)
+			reordered = append(reordered, reps[best+1:]...)
+			t.replicas[s] = reordered
+		}
+		count[t.replicas[s][0]]++
+	}
 }
 
 // rendezvous ranks members by hash(shard, member) and returns the top n.

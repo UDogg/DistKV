@@ -1,0 +1,17 @@
+{
+  "name": "@distkv/dashboard",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Live DistKV dashboard (embedded into the Go binary)",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p .",
+    "build": "npm run typecheck && node build.mjs",
+    "pages": "node build.mjs --out ../../dist-pages --sim",
+    "watch": "node build.mjs --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0"
+  }
+}

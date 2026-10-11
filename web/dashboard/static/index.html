@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="distkv-mode" content="auto">
+  <title>DistKV · Live Cluster</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="bg-orbs" aria-hidden="true"><span></span><span></span><span></span></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <img src="favicon.svg" alt="" width="34" height="34">
+      <div>
+        <h1>Dist<span>KV</span></h1>
+        <p>Raft · multi-shard · live</p>
+      </div>
+    </div>
+    <div class="status-strip">
+      <span id="health-pill" class="pill pill-wait">connecting…</span>
+      <span id="conn-pill" class="pill pill-muted">—</span>
+      <span id="mode-pill" class="pill pill-accent" hidden>DEMO</span>
+    </div>
+    <div class="top-actions">
+      <span class="observed" id="observed"></span>
+      <button class="icon-btn" id="theme-toggle" title="Toggle theme">◐</button>
+    </div>
+  </header>
+
+  <div id="sim-banner" class="banner" hidden>
+    <strong>Simulation mode.</strong> Everything below is driven by an in-browser model of the cluster.
+    Run <code>make demo</code> locally to drive real DistKV processes from this same dashboard.
+  </div>
+
+  <main>
+    <section class="kpis" id="kpis"></section>
+
+    <section class="grid two">
+      <article class="card">
+        <header><h2>Throughput</h2><div class="legend" id="tp-legend"></div></header>
+        <canvas id="chart-throughput" height="220"></canvas>
+      </article>
+      <article class="card">
+        <header><h2>Latency <small>server-side</small></h2><div class="legend" id="lat-legend"></div></header>
+        <canvas id="chart-latency" height="220"></canvas>
+      </article>
+    </section>
+
+    <section class="card" id="control-card" hidden>
+      <header>
+        <h2>Chaos lab <small>real processes, real failures</small></h2>
+        <div class="scenario-buttons">
+          <button class="btn danger" data-scenario="kill-leader">💥 Kill busiest leader</button>
+          <button class="btn warn" data-scenario="partition">✂️ Partition random node</button>
+          <button class="btn warn" data-scenario="lossy">📉 30% packet loss</button>
+          <button class="btn" data-scenario="rolling">🔁 Rolling restart</button>
+          <button class="btn ok" data-scenario="heal">🩹 Heal everything</button>
+        </div>
+      </header>
+      <div class="load-controls">
+        <label><span>Generated load <output id="rate-out">0</output> ops/s</span>
+          <input type="range" id="rate" min="0" max="6000" step="100"></label>
+        <label><span>Read ratio <output id="ratio-out">80</output>%</span>
+          <input type="range" id="ratio" min="0" max="100" step="5"></label>
+      </div>
+    </section>
+
+    <section class="card">
+      <header><h2>Nodes</h2><span class="hint">leaders follow the preferred replica via automatic balancing</span></header>
+      <div class="nodes" id="nodes"></div>
+    </section>
+
+    <section class="grid two">
+      <article class="card">
+        <header><h2>Consistent-hash ring</h2><span class="hint" id="ring-hint"></span></header>
+        <div class="ring-wrap">
+          <svg id="ring" viewBox="-160 -160 320 320" role="img" aria-label="hash ring"></svg>
+          <div class="ring-side">
+            <label class="finder">Find a key
+              <input id="find-key" placeholder="e.g. user:42" autocomplete="off" spellcheck="false">
+            </label>
+            <div id="find-result" class="find-result muted">Type a key to see where it lives. Hashing runs in your browser using the same FNV-1a + SplitMix64 ring as the servers.</div>
+            <div class="legend vertical" id="ring-legend"></div>
+          </div>
+        </div>
+      </article>
+      <article class="card">
+        <header><h2>Key-value playground</h2><span class="hint">requests go through the real API</span></header>
+        <form class="kv-form" id="kv-form">
+          <input id="kv-key" placeholder="key" value="hello" spellcheck="false">
+          <input id="kv-value" placeholder="value" value="world" spellcheck="false">
+          <input id="kv-ttl" placeholder="ttl (s)" type="number" min="0">
+          <div class="kv-buttons">
+            <button class="btn primary" data-op="put" type="submit">PUT</button>
+            <button class="btn" data-op="get" type="button">GET</button>
+            <button class="btn" data-op="delete" type="button">DELETE</button>
+          </div>
+        </form>
+        <pre id="kv-result" class="kv-result">—</pre>
+      </article>
+    </section>
+
+    <section class="card">
+      <header><h2>Shards</h2><span class="hint">★ leader · ● follower (lag in tooltip) · ✕ replica down</span></header>
+      <div class="matrix-wrap"><table class="matrix" id="matrix"></table></div>
+    </section>
+
+    <section class="grid two">
+      <article class="card">
+        <header><h2>Event timeline</h2><span class="hint" id="events-hint">derived live from snapshots</span></header>
+        <ol class="events" id="events"></ol>
+      </article>
+      <article class="card" id="history-card">
+        <header><h2>History <small id="history-badge" class="badge">SQLite</small></h2><span class="hint" id="history-stats"></span></header>
+        <canvas id="chart-history" height="220"></canvas>
+        <p class="muted small" id="history-note">Recorded by the Python historian into SQLite, so it survives page reloads and restarts.</p>
+      </article>
+    </section>
+  </main>
+
+  <footer>
+    <span>DistKV — Go · TypeScript · Python · Rust</span>
+    <a href="https://github.com/UDogg/DistKV" target="_blank" rel="noopener">GitHub</a>
+  </footer>
+
+  <div class="toasts" id="toasts"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

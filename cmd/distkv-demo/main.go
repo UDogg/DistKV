@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/UDogg/DistKV/internal/api"
+	"github.com/UDogg/DistKV/internal/histogram"
 	"github.com/UDogg/DistKV/internal/transport"
 	"github.com/UDogg/DistKV/internal/ui"
 	"github.com/UDogg/DistKV/pkg/client"
@@ -116,6 +117,79 @@ type supervisor struct {
 	rate      atomic.Int64
 	readRatio atomic.Uint64 // float64 bits
 	historian string        // base URL, if running
+	clientStats
+}
+
+// clientStats is what the demo's traffic generator, a real client with
+// retries, actually experienced: the user-visible availability.
+type clientStats struct {
+	okTotal, failTotal atomic.Uint64
+	okSec, failSec     atomic.Uint64
+	statsMu            sync.Mutex
+	window             []clientSecond // last 60 seconds
+	lat                *histogram.Histogram
+}
+
+type clientSecond struct {
+	OK     uint64  `json:"ok"`
+	Failed uint64  `json:"failed"`
+	P99Ms  float64 `json:"p99_ms"`
+}
+
+// ClientReport is exposed in /demo/info.
+type ClientReport struct {
+	OKTotal      uint64         `json:"ok_total"`
+	FailedTotal  uint64         `json:"failed_total"`
+	Availability float64        `json:"availability"`     // since start
+	Window       float64        `json:"availability_60s"` // last 60 s
+	LastSecond   clientSecond   `json:"last_second"`
+	Recent       []clientSecond `json:"recent"`
+}
+
+func (cs *clientStats) record(err error, d time.Duration) {
+	if err != nil && !errors.Is(err, client.ErrNotFound) {
+		cs.failTotal.Add(1)
+		cs.failSec.Add(1)
+		return
+	}
+	cs.okTotal.Add(1)
+	cs.okSec.Add(1)
+	cs.statsMu.Lock()
+	cs.lat.Record(d)
+	cs.statsMu.Unlock()
+}
+
+func (cs *clientStats) tick() {
+	cs.statsMu.Lock()
+	defer cs.statsMu.Unlock()
+	sec := clientSecond{OK: cs.okSec.Swap(0), Failed: cs.failSec.Swap(0), P99Ms: float64(cs.lat.Quantile(0.99).Microseconds()) / 1000}
+	cs.lat = histogram.New()
+	cs.window = append(cs.window, sec)
+	if len(cs.window) > 60 {
+		cs.window = cs.window[1:]
+	}
+}
+
+func (cs *clientStats) report() ClientReport {
+	cs.statsMu.Lock()
+	defer cs.statsMu.Unlock()
+	r := ClientReport{OKTotal: cs.okTotal.Load(), FailedTotal: cs.failTotal.Load(), Availability: 1, Window: 1,
+		Recent: append([]clientSecond(nil), cs.window...)}
+	if t := r.OKTotal + r.FailedTotal; t > 0 {
+		r.Availability = float64(r.OKTotal) / float64(t)
+	}
+	var ok, failed uint64
+	for _, s := range cs.window {
+		ok += s.OK
+		failed += s.Failed
+	}
+	if ok+failed > 0 {
+		r.Window = float64(ok) / float64(ok+failed)
+	}
+	if n := len(cs.window); n > 0 {
+		r.LastSecond = cs.window[n-1]
+	}
+	return r
 }
 
 func run(cfg config, logger *slog.Logger) error {
@@ -137,6 +211,7 @@ func run(cfg config, logger *slog.Logger) error {
 		return err
 	}
 	sv := &supervisor{cfg: cfg, logger: logger, bin: bin}
+	sv.lat = histogram.New()
 	sv.rate.Store(int64(cfg.rate))
 	sv.setReadRatio(cfg.readRatio)
 
@@ -388,10 +463,15 @@ func (sv *supervisor) generateLoad(ctx context.Context) {
 	t := time.NewTicker(tick)
 	defer t.Stop()
 	var carry float64
+	secTick := time.NewTicker(time.Second)
+	defer secTick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-secTick.C:
+			sv.clientStats.tick()
+			continue
 		case <-t.C:
 		}
 		carry += float64(sv.rate.Load()) * tick.Seconds()
@@ -409,12 +489,17 @@ func (sv *supervisor) generateLoad(ctx context.Context) {
 				key := fmt.Sprintf("demo:%05d", rand.Intn(20000))
 				opCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				defer cancel()
+				start := time.Now()
+				var err error
 				if rand.Float64() < rr {
-					c.Get(opCtx, key)
+					_, err = c.Get(opCtx, key)
 				} else if rand.Intn(10) == 0 {
-					c.Put(opCtx, key, val, client.WithTTL(time.Duration(30+rand.Intn(90))*time.Second))
+					_, err = c.Put(opCtx, key, val, client.WithTTL(time.Duration(30+rand.Intn(90))*time.Second))
 				} else {
-					c.Put(opCtx, key, val)
+					_, err = c.Put(opCtx, key, val)
+				}
+				if ctx.Err() == nil {
+					sv.clientStats.record(err, time.Since(start))
 				}
 			}()
 		}
@@ -425,12 +510,13 @@ func (sv *supervisor) generateLoad(ctx context.Context) {
 // HTTP: dashboard, control API, proxy to the cluster
 
 type demoInfo struct {
-	Demo      bool    `json:"demo"`
-	Nodes     []*node `json:"nodes"`
-	Rate      int64   `json:"rate"`
-	ReadRatio float64 `json:"read_ratio"`
-	Historian bool    `json:"historian"`
-	Shards    int     `json:"shards"`
+	Demo      bool         `json:"demo"`
+	Nodes     []*node      `json:"nodes"`
+	Rate      int64        `json:"rate"`
+	ReadRatio float64      `json:"read_ratio"`
+	Historian bool         `json:"historian"`
+	Shards    int          `json:"shards"`
+	Client    ClientReport `json:"client"`
 }
 
 func (sv *supervisor) routes() http.Handler {
@@ -446,7 +532,7 @@ func (sv *supervisor) routes() http.Handler {
 		sv.mu.Unlock()
 		sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
 		writeJSON(w, demoInfo{Demo: true, Nodes: nodes, Rate: sv.rate.Load(), ReadRatio: sv.getReadRatio(),
-			Historian: sv.historian != "", Shards: sv.cfg.shards})
+			Historian: sv.historian != "", Shards: sv.cfg.shards, Client: sv.clientStats.report()})
 	})
 	mux.HandleFunc("POST /demo/nodes/{id}/{action}", func(w http.ResponseWriter, r *http.Request) {
 		n := sv.find(r.PathValue("id"))

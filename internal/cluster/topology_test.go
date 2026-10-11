@@ -93,6 +93,25 @@ func TestReplicasDistinctAndBalanced(t *testing.T) {
 	}
 }
 
+// Preferred leaders must be spread nearly evenly even for small shard
+// counts (exact balance is not always possible given the replica sets).
+func TestPreferredLeadersBalanced(t *testing.T) {
+	for _, c := range []struct{ nodes, shards int }{{5, 24}, {3, 8}, {7, 16}, {4, 6}, {9, 64}} {
+		topo, _ := New(Spec{Members: members(c.nodes), Shards: c.shards})
+		pref := map[NodeID]int{}
+		for s := 0; s < c.shards; s++ {
+			pref[topo.Replicas(ShardID(s))[0]]++
+		}
+		lo, hi := c.shards, 0
+		for _, m := range topo.Members() {
+			lo, hi = min(lo, pref[m.ID]), max(hi, pref[m.ID])
+		}
+		if lo == 0 || hi-lo > 2 {
+			t.Errorf("%d nodes/%d shards: preferred leaders unbalanced: %v", c.nodes, c.shards, pref)
+		}
+	}
+}
+
 func TestKeyDistribution(t *testing.T) {
 	const shards, keys = 16, 160_000
 	topo, _ := New(Spec{Members: members(3), Shards: shards})
