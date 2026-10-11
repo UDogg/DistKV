@@ -259,6 +259,12 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, shard cluster.S
 	if body != nil {
 		rd = bytes.NewReader(body)
 	}
+	if s.cfg.EnableFaultInjection && s.faults.isolated.Load() {
+		return false // partitioned: peers are unreachable
+	}
+	if hops == 0 {
+		s.live.forwarded.Add(1)
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, r.Method, m.Addr+r.URL.RequestURI(), rd)

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -27,6 +28,11 @@ func (s *Server) localStatus() api.NodeStatus {
 		Fingerprint: s.topo.Fingerprint(),
 		Ready:       s.ready(),
 		UptimeSec:   time.Since(processStart).Seconds(),
+		Load:        s.live.snapshot(),
+	}
+	if s.cfg.EnableFaultInjection {
+		f := s.faults.get()
+		st.Faults = &f
 	}
 	for _, g := range s.sortedGroups() {
 		rs := g.node.Status()
@@ -66,6 +72,10 @@ func (s *Server) handleLocalStatus(w http.ResponseWriter, _ *http.Request) {
 // handleCluster aggregates every node's status into a cluster-wide view:
 // which node leads each shard and whether each shard has a healthy leader.
 func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.clusterStatus(r.Context()))
+}
+
+func (s *Server) clusterStatus(ctx context.Context) api.ClusterStatus {
 	members := s.topo.Members()
 	statuses := make([]*api.NodeStatus, len(members))
 	var wg sync.WaitGroup
@@ -78,7 +88,10 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(i int, m cluster.Member) {
 			defer wg.Done()
-			ctx, cancel := context.WithTimeout(r.Context(), 750*time.Millisecond)
+			if s.cfg.EnableFaultInjection && s.faults.isolated.Load() {
+				return // partitioned from peers
+			}
+			ctx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
 			defer cancel()
 			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, m.Addr+"/v1/status", nil)
 			resp, err := s.client.Do(req)
@@ -102,6 +115,8 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 			VirtualNodes:      spec.VirtualNodes,
 		},
 		Fingerprint: s.topo.Fingerprint(),
+		Timestamp:   time.Now().UnixMilli(),
+		ObservedBy:  string(s.cfg.NodeID),
 	}
 	for _, m := range members {
 		out.Spec.Members = append(out.Spec.Members, api.Member{ID: string(m.ID), Addr: m.Addr})
@@ -112,17 +127,31 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 		leader string
 		commit uint64
 		keys   int
+		lag    map[string]uint64
 	}
 	shards := make([]best, spec.Shards)
 	for i, m := range members {
 		ns := api.NodeSummary{ID: string(m.ID), Addr: m.Addr, ShardsHeld: len(s.topo.ShardsOn(m.ID))}
 		if st := statuses[i]; st != nil {
-			ns.Reachable, ns.Ready, ns.Version = true, st.Ready, st.Version
+			ns.Reachable, ns.Ready, ns.Version, ns.UptimeSec = true, st.Ready, st.Version, st.UptimeSec
+			load := st.Load
+			ns.Load, ns.Faults = &load, st.Faults
+			out.Load.ReadsPerSec += load.ReadsPerSec
+			out.Load.WritesPerSec += load.WritesPerSec
+			out.Load.ErrorsPerSec += load.ErrorsPerSec
+			out.Load.ForwardedPerSec += load.ForwardedPerSec
+			out.Load.P50Ms = max(out.Load.P50Ms, load.P50Ms)
+			out.Load.P99Ms = max(out.Load.P99Ms, load.P99Ms)
+			out.Load.P999Ms = max(out.Load.P999Ms, load.P999Ms)
 			for _, g := range st.Groups {
 				if g.State == raft.Leader.String() {
 					ns.ShardsLed++
 					if g.Term >= shards[g.Shard].term {
-						shards[g.Shard] = best{term: g.Term, leader: st.Node, commit: g.CommitIndex, keys: g.Keys}
+						lag := map[string]uint64{}
+						for f, fs := range g.Followers {
+							lag[f] = fs.Lag
+						}
+						shards[g.Shard] = best{term: g.Term, leader: st.Node, commit: g.CommitIndex, keys: g.Keys, lag: lag}
 					}
 				}
 			}
@@ -138,6 +167,7 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 			CommitIndex: b.commit,
 			Keys:        b.keys,
 			Healthy:     b.leader != "",
+			Lag:         b.lag,
 		}
 		if m, ok := s.topo.Member(cluster.NodeID(b.leader)); ok {
 			sum.LeaderAddr = m.Addr
@@ -147,7 +177,44 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Shards = append(out.Shards, sum)
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out
+}
+
+// handleEvents streams cluster snapshots as Server-Sent Events
+// (GET /v1/events?interval=1s). The dashboard subscribes to it.
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	interval := time.Second
+	if v := r.URL.Query().Get("interval"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 250*time.Millisecond {
+			interval = d
+		}
+	}
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		data, _ := json.Marshal(s.clusterStatus(r.Context()))
+		if _, err := fmt.Fprintf(w, "event: cluster\ndata: %s\n\n", data); err != nil {
+			return
+		}
+		flusher.Flush()
+		select {
+		case <-r.Context().Done():
+			return
+		case <-s.stopBg:
+			return
+		case <-t.C:
+		}
+	}
 }
 
 // handleTransfer serves POST /v1/admin/shards/{shard}/transfer-leader?to=ID.
@@ -302,7 +369,11 @@ func (s *Server) instrument(op string, h http.HandlerFunc) http.HandlerFunc {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		h(rec, r)
-		s.m.latency.With(op).Observe(time.Since(start).Seconds())
+		d := time.Since(start)
+		s.m.latency.With(op).Observe(d.Seconds())
 		s.m.requests.With(op, strconv.Itoa(rec.status)).Inc()
+		if r.Header.Get(api.HeaderHops) == "" { // count requests where they entered the cluster
+			s.live.record(op == "get", d, rec.status)
+		}
 	}
 }

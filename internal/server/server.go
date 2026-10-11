@@ -25,6 +25,7 @@ import (
 	"github.com/UDogg/DistKV/internal/kv"
 	"github.com/UDogg/DistKV/internal/raft"
 	"github.com/UDogg/DistKV/internal/transport"
+	"github.com/UDogg/DistKV/internal/ui"
 )
 
 // Config configures a Server.
@@ -73,6 +74,15 @@ type Config struct {
 	// PeerTLS configures outbound connections to other nodes (Raft RPCs,
 	// forwarding, status aggregation). Member addresses must use https://.
 	PeerTLS *tls.Config
+
+	// EnableFaultInjection exposes /v1/admin/faults for partition, packet
+	// loss and delay injection (demos and chaos testing only).
+	EnableFaultInjection bool
+	// CORSOrigin, if set, is sent as Access-Control-Allow-Origin so that a
+	// dashboard served from elsewhere can call the API.
+	CORSOrigin string
+	// DisableUI turns off the embedded dashboard at /ui/.
+	DisableUI bool
 
 	EnablePprof bool
 	Logger      *slog.Logger
@@ -137,6 +147,8 @@ type Server struct {
 	handler http.Handler
 	httpSrv *http.Server
 	m       *serverMetrics
+	live    *liveStats
+	faults  faults
 
 	started  atomic.Bool
 	draining atomic.Bool
@@ -176,11 +188,15 @@ func New(cfg Config) (*Server, error) {
 		client:      transport.NewHTTPClient(cfg.PeerTLS),
 		leaderHints: make(map[cluster.ShardID]cluster.NodeID),
 		stopBg:      make(chan struct{}),
+		live:        newLiveStats(),
 	}
 	s.transport = transport.NewHTTP(func(id raft.NodeID) (string, bool) {
 		m, ok := topo.Member(cluster.NodeID(id))
 		return m.Addr, ok
 	}, cfg.PeerTLS)
+	if cfg.EnableFaultInjection {
+		s.transport.Hook = s.faults.outbound
+	}
 
 	if cfg.DataDir != "" {
 		if err := s.checkFingerprint(); err != nil {
@@ -413,8 +429,23 @@ func (s *Server) startBackground() {
 		s.bgWG.Add(1)
 		go s.rebalanceLoop()
 	}
-	s.bgWG.Add(1)
+	s.bgWG.Add(2)
 	go s.expiryLoop()
+	go s.statsLoop()
+}
+
+func (s *Server) statsLoop() {
+	defer s.bgWG.Done()
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.stopBg:
+			return
+		case <-t.C:
+			s.live.tick()
+		}
+	}
 }
 
 // rebalanceLoop moves leadership of each shard back to its preferred
@@ -487,6 +518,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT /v1/kv/{key...}", s.instrument("put", s.handlePut))
 	mux.HandleFunc("DELETE /v1/kv/{key...}", s.instrument("delete", s.handleDelete))
 	mux.HandleFunc("GET /v1/cluster", s.handleCluster)
+	mux.HandleFunc("GET /v1/events", s.handleEvents)
 	mux.HandleFunc("GET /v1/status", s.handleLocalStatus)
 	mux.HandleFunc("POST /v1/admin/shards/{shard}/transfer-leader", s.peerOnly(s.handleTransfer))
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
@@ -499,7 +531,17 @@ func (s *Server) routes() http.Handler {
 		}
 		return g.node, true
 	})
-	mux.Handle(transport.Pattern, s.peerOnly(raftHandler.ServeHTTP))
+	raftHTTP := s.peerOnly(raftHandler.ServeHTTP)
+	if s.cfg.EnableFaultInjection {
+		raftHTTP = s.faults.inbound(raftHTTP)
+		mux.HandleFunc("GET /v1/admin/faults", s.peerOnly(s.handleFaults))
+		mux.HandleFunc("POST /v1/admin/faults", s.peerOnly(s.handleFaults))
+	}
+	mux.Handle(transport.Pattern, raftHTTP)
+	if !s.cfg.DisableUI {
+		mux.Handle("GET /ui/", http.StripPrefix("/ui/", ui.Handler()))
+		mux.Handle("GET /{$}", http.RedirectHandler("/ui/", http.StatusFound))
+	}
 	if s.cfg.EnablePprof {
 		mux.HandleFunc("/debug/pprof/", pprof.Index)
 		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -507,7 +549,26 @@ func (s *Server) routes() http.Handler {
 		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	}
+	if s.cfg.CORSOrigin != "" {
+		return withCORS(mux, s.cfg.CORSOrigin)
+	}
 	return mux
+}
+
+// withCORS allows a browser dashboard on another origin to use the API.
+func withCORS(h http.Handler, origin string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hd := w.Header()
+		hd.Set("Access-Control-Allow-Origin", origin)
+		hd.Set("Access-Control-Expose-Headers", "X-Distkv-Version, X-Distkv-Shard, X-Distkv-Leader, X-Distkv-Served-By, X-Distkv-Expires-At")
+		if r.Method == http.MethodOptions {
+			hd.Set("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, OPTIONS")
+			hd.Set("Access-Control-Allow-Headers", "Content-Type, X-Distkv-Client-Id, X-Distkv-Seq, X-Distkv-Ack-Below")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 // peerOnly restricts a handler to callers holding a certificate signed by

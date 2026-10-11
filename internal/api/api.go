@@ -118,7 +118,29 @@ type NodeStatus struct {
 	Fingerprint string        `json:"fingerprint"`
 	Ready       bool          `json:"ready"`
 	UptimeSec   float64       `json:"uptime_seconds"`
+	Load        Load          `json:"load"`
+	Faults      *Faults       `json:"faults,omitempty"`
 	Groups      []GroupStatus `json:"groups"`
+}
+
+// Load is a node's (or the cluster's) recent client traffic. Rates are
+// per second over the last full second; latency quantiles cover the last
+// five seconds of requests that entered the cluster at this node.
+type Load struct {
+	ReadsPerSec     float64 `json:"reads_per_sec"`
+	WritesPerSec    float64 `json:"writes_per_sec"`
+	ErrorsPerSec    float64 `json:"errors_per_sec"`
+	ForwardedPerSec float64 `json:"forwarded_per_sec"`
+	P50Ms           float64 `json:"p50_ms"`
+	P99Ms           float64 `json:"p99_ms"`
+	P999Ms          float64 `json:"p999_ms"`
+}
+
+// Faults describes injected network faults (fault-injection builds only).
+type Faults struct {
+	Isolated    bool `json:"isolated"`
+	DropPercent int  `json:"drop_percent"`
+	DelayMs     int  `json:"delay_ms"`
 }
 
 // ShardSummary is the cluster-wide view of a shard.
@@ -131,17 +153,22 @@ type ShardSummary struct {
 	CommitIndex uint64   `json:"commit_index"`
 	Keys        int      `json:"keys"`
 	Healthy     bool     `json:"healthy"`
+	// Lag is the leader's view of how many entries each follower is behind.
+	Lag map[string]uint64 `json:"lag,omitempty"`
 }
 
 // NodeSummary is the cluster-wide view of a node.
 type NodeSummary struct {
-	ID         string `json:"id"`
-	Addr       string `json:"addr"`
-	Reachable  bool   `json:"reachable"`
-	Ready      bool   `json:"ready"`
-	ShardsLed  int    `json:"shards_led"`
-	ShardsHeld int    `json:"shards_hosted"`
-	Version    string `json:"version,omitempty"`
+	ID         string  `json:"id"`
+	Addr       string  `json:"addr"`
+	Reachable  bool    `json:"reachable"`
+	Ready      bool    `json:"ready"`
+	ShardsLed  int     `json:"shards_led"`
+	ShardsHeld int     `json:"shards_hosted"`
+	Version    string  `json:"version,omitempty"`
+	UptimeSec  float64 `json:"uptime_seconds,omitempty"`
+	Load       *Load   `json:"load,omitempty"`
+	Faults     *Faults `json:"faults,omitempty"`
 }
 
 // ClusterStatus is returned by GET /v1/cluster.
@@ -151,4 +178,10 @@ type ClusterStatus struct {
 	Nodes         []NodeSummary  `json:"nodes"`
 	Shards        []ShardSummary `json:"shards"`
 	HealthyShards int            `json:"healthy_shards"`
+	// Load sums rates across nodes; latency quantiles are the worst node's.
+	Load Load `json:"load"`
+	// Timestamp is the Unix time (milliseconds) the snapshot was taken.
+	Timestamp int64 `json:"ts"`
+	// ObservedBy is the node that aggregated this view.
+	ObservedBy string `json:"observed_by"`
 }

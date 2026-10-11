@@ -58,6 +58,9 @@ type options struct {
 	TLSKey            string
 	TLSCA             string
 	TLSClientAuth     bool
+	FaultInjection    bool
+	CORSOrigin        string
+	DisableUI         bool
 }
 
 func main() {
@@ -93,6 +96,9 @@ func run() error {
 	fs.StringVar(&o.LogLevel, "log-level", "info", "debug | info | warn | error")
 	fs.StringVar(&o.LogFormat, "log-format", "text", "text | json")
 	fs.BoolVar(&o.Pprof, "pprof", false, "expose /debug/pprof")
+	fs.BoolVar(&o.FaultInjection, "enable-fault-injection", false, "expose /v1/admin/faults (partition/drop/delay injection; demos only)")
+	fs.StringVar(&o.CORSOrigin, "cors-origin", "", "Access-Control-Allow-Origin for browser dashboards on other origins")
+	fs.BoolVar(&o.DisableUI, "disable-ui", false, "do not serve the embedded dashboard at /ui/")
 	fs.StringVar(&o.TLSCert, "tls-cert", "", "PEM certificate for HTTPS (also presented to peers)")
 	fs.StringVar(&o.TLSKey, "tls-key", "", "PEM private key for --tls-cert")
 	fs.StringVar(&o.TLSCA, "tls-ca", "", "PEM CA bundle: verifies peers and enables mutual TLS for Raft/admin endpoints")
@@ -184,20 +190,23 @@ func run() error {
 			ReplicationFactor: o.ReplicationFactor,
 			VirtualNodes:      o.VirtualNodes,
 		},
-		DataDir:           dataDir,
-		NoSync:            o.NoSync,
-		HeartbeatInterval: o.Heartbeat,
-		ElectionTimeout:   o.ElectionTimeout,
-		SnapshotThreshold: o.SnapshotThreshold,
-		ReadMode:          o.ReadMode,
-		MaxKeysPerShard:   o.MaxKeysPerShard,
-		MaxBytesPerShard:  o.MaxBytesPerShard,
-		RequestTimeout:    o.RequestTimeout,
-		RebalanceInterval: o.Rebalance,
-		EnablePprof:       o.Pprof,
-		TLS:               serverTLS,
-		PeerTLS:           peerTLS,
-		Logger:            logger,
+		DataDir:              dataDir,
+		NoSync:               o.NoSync,
+		HeartbeatInterval:    o.Heartbeat,
+		ElectionTimeout:      o.ElectionTimeout,
+		SnapshotThreshold:    o.SnapshotThreshold,
+		ReadMode:             o.ReadMode,
+		MaxKeysPerShard:      o.MaxKeysPerShard,
+		MaxBytesPerShard:     o.MaxBytesPerShard,
+		RequestTimeout:       o.RequestTimeout,
+		RebalanceInterval:    o.Rebalance,
+		EnablePprof:          o.Pprof,
+		EnableFaultInjection: o.FaultInjection,
+		CORSOrigin:           o.CORSOrigin,
+		DisableUI:            o.DisableUI,
+		TLS:                  serverTLS,
+		PeerTLS:              peerTLS,
+		Logger:               logger,
 	})
 	if err != nil {
 		return err

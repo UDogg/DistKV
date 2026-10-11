@@ -407,7 +407,9 @@ func (c *Client) do(ctx context.Context, method, key string, q url.Values, body 
 		case http.StatusServiceUnavailable, http.StatusBadGateway, http.StatusGatewayTimeout:
 			e := r.apiErr()
 			lastErr = fmt.Errorf("%s (%s)", e.Error, e.Code)
-			if e.Code == api.CodeShuttingDown || e.Code == api.CodeUnavailable {
+			// This node cannot serve the shard right now (it may be
+			// partitioned from its peers): probe the other replicas.
+			if e.Code == api.CodeShuttingDown || e.Code == api.CodeUnavailable || e.Code == api.CodeNoLeader {
 				c.forgetLeader(shard, base)
 			}
 			if write && seq == 0 && e.Code != api.CodeNoLeader && e.Code != api.CodeShuttingDown {

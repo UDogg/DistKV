@@ -121,16 +121,17 @@ func (c *Cluster) launch(id cluster.NodeID, l net.Listener) {
 		level = slog.LevelInfo
 	}
 	cfg := server.Config{
-		NodeID:            id,
-		Spec:              c.spec,
-		HeartbeatInterval: c.opts.HeartbeatInterval,
-		ElectionTimeout:   c.opts.ElectionTimeout,
-		SnapshotThreshold: c.opts.SnapshotThreshold,
-		RebalanceInterval: c.opts.RebalanceInterval,
-		RequestTimeout:    2 * time.Second,
-		TLS:               c.serverTLS,
-		PeerTLS:           c.peerTLS,
-		Logger:            slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})),
+		NodeID:               id,
+		Spec:                 c.spec,
+		HeartbeatInterval:    c.opts.HeartbeatInterval,
+		ElectionTimeout:      c.opts.ElectionTimeout,
+		SnapshotThreshold:    c.opts.SnapshotThreshold,
+		RebalanceInterval:    c.opts.RebalanceInterval,
+		RequestTimeout:       2 * time.Second,
+		TLS:                  c.serverTLS,
+		EnableFaultInjection: true,
+		PeerTLS:              c.peerTLS,
+		Logger:               slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})),
 	}
 	if c.opts.Persistent {
 		cfg.DataDir = filepath.Join(c.dataDir, string(id))

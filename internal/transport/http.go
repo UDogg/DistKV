@@ -47,6 +47,9 @@ type HTTP struct {
 	client  *http.Client
 	resolve Resolver
 	bufs    sync.Pool
+	// Hook, if set, runs before every outbound RPC; a non-nil error fails
+	// the RPC without sending it (used for fault injection).
+	Hook func(to raft.NodeID) error
 }
 
 // NewHTTPClient returns an http.Client tuned for low-latency intra-cluster
@@ -115,6 +118,11 @@ func (s *shardTransport) TimeoutNow(ctx context.Context, to raft.NodeID, req *ra
 }
 
 func (t *HTTP) call(ctx context.Context, to raft.NodeID, shard, rpc string, req, resp any) error {
+	if t.Hook != nil {
+		if err := t.Hook(to); err != nil {
+			return err
+		}
+	}
 	base, ok := t.resolve(to)
 	if !ok {
 		return fmt.Errorf("transport: unknown peer %q", to)
