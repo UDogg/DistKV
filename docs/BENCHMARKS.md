@@ -76,7 +76,24 @@ revives a random node every 0.3–1.3 s.
 
 ## Configuration variants (10,000 ops/s, 30 s each)
 
-VARIANTS_PLACEHOLDER
+Each variant ran on a fresh cluster. All five completed 300,000 operations with **0 errors**.
+
+| Variant | p50 | p90 | p99 | p99.9 | write p50 | write p99 |
+|---|---:|---:|---:|---:|---:|---:|
+| Default (fsync, lease reads) | 0.60 ms | 2.5 ms | 8.8 ms | 19.2 ms | 1.42 ms | 12.3 ms |
+| `--no-sync` | 0.34 ms | 1.1 ms | 5.6 ms | 12.5 ms | 0.58 ms | 6.8 ms |
+| `--read-mode readindex` | 1.98 ms | 7.7 ms | 21.8 ms | 38.4 ms | 2.75 ms | 21.8 ms |
+| Stale reads (`client.Stale()`) | 0.57 ms | 2.4 ms | 9.6 ms | 24.8 ms | 1.36 ms | 14.0 ms |
+| Mutual TLS (`TLS=1`) | 0.60 ms | 2.4 ms | 9.5 ms | 19.5 ms | 1.41 ms | 12.5 ms |
+
+* **Lease reads vs. ReadIndex.** Leases cut read p99 by about 2.5×. ReadIndex adds a quorum
+  heartbeat round per batch of reads, and the extra RPCs also slow writes on this CPU-bound box.
+* **`--no-sync`** roughly halves write latency, trading away durability against simultaneous
+  power loss on a majority of nodes.
+* **TLS 1.3 with mutual authentication** costs almost nothing at this load, because connections
+  are long-lived and handshakes are amortised.
+* **Stale reads** don't help here: every replica shares the same 4 cores. They pay off when
+  replicas run on separate machines, or during elections.
 
 ## Optimisation history
 
