@@ -1,13 +1,21 @@
-# A three-node DistKV cluster with Prometheus and Grafana.
+# A five-node DistKV cluster with live traffic, the SQLite historian,
+# Prometheus and Grafana. Everything runs locally for free.
 #
 #   docker compose -f deploy/docker-compose.yml up -d --build
-#   curl -X PUT localhost:7001/v1/kv/hello -d world
-#   curl localhost:7002/v1/kv/hello
-#   open http://localhost:3000   (Grafana, anonymous access, "DistKV" dashboard)
 #
-# Node addresses use container DNS names, so use the smart client from
-# inside the compose network, or pass --no-smart to distkvctl/distkv-bench
-# from the host (requests are then forwarded server-side).
+#   Dashboard   http://localhost:7001/ui/?historian=http://localhost:8090
+#   Grafana     http://localhost:3000      (anonymous, "DistKV" dashboard)
+#   Prometheus  http://localhost:9090
+#   Historian   http://localhost:8090/stats
+#
+#   # chaos: kill a node, then bring it back
+#   docker compose -f deploy/docker-compose.yml kill distkv3
+#   docker compose -f deploy/docker-compose.yml start distkv3
+#   # chaos: partition a node (fault injection is enabled)
+#   curl -X POST localhost:7002/v1/admin/faults -d '{"isolated":true}'
+#
+# For one-click chaos buttons in the dashboard, use `make demo` instead
+# (it supervises local processes and needs no Docker).
 
 x-distkv: &distkv
   build:
@@ -16,12 +24,16 @@ x-distkv: &distkv
   restart: unless-stopped
   stop_grace_period: 20s
   environment: &env
-    DISTKV_MEMBERS: n1=distkv1:7001,n2=distkv2:7001,n3=distkv3:7001
-    DISTKV_SHARDS: "16"
+    DISTKV_MEMBERS: n1=distkv1:7001,n2=distkv2:7001,n3=distkv3:7001,n4=distkv4:7001,n5=distkv5:7001
+    DISTKV_SHARDS: "24"
     DISTKV_REPLICATION: "3"
     DISTKV_LISTEN: ":7001"
     DISTKV_DATA_DIR: /data
     DISTKV_LOG_FORMAT: json
+    DISTKV_ELECTION_TIMEOUT: 300ms
+    DISTKV_HEARTBEAT: 50ms
+    DISTKV_ENABLE_FAULT_INJECTION: "true"
+    DISTKV_CORS_ORIGIN: "*"
   healthcheck:
     test: ["CMD", "/usr/local/bin/distkvctl", "--endpoints", "http://localhost:7001", "health"]
     interval: 10s
@@ -46,6 +58,36 @@ services:
     environment: { <<: *env, DISTKV_ID: n3 }
     ports: ["7003:7001"]
     volumes: ["distkv3:/data"]
+  distkv4:
+    <<: *distkv
+    hostname: distkv4
+    environment: { <<: *env, DISTKV_ID: n4 }
+    ports: ["7004:7001"]
+    volumes: ["distkv4:/data"]
+  distkv5:
+    <<: *distkv
+    hostname: distkv5
+    environment: { <<: *env, DISTKV_ID: n5 }
+    ports: ["7005:7001"]
+    volumes: ["distkv5:/data"]
+
+  # Continuous traffic so the dashboards have something to show.
+  loadgen:
+    image: distkv:local
+    depends_on: [distkv1, distkv2, distkv3, distkv4, distkv5]
+    restart: unless-stopped
+    entrypoint: ["/usr/local/bin/distkv-bench"]
+    command: ["--endpoints", "http://distkv1:7001,http://distkv2:7001", "--rate", "1000", "--duration", "8760h",
+              "--keys", "20000", "--quiet"]
+
+  # Python historian: cluster history and incident timeline in SQLite.
+  historian:
+    build:
+      context: ../clients/python
+    restart: unless-stopped
+    command: ["--endpoints", "http://distkv1:7001,http://distkv2:7001,http://distkv3:7001"]
+    ports: ["8090:8090"]
+    volumes: ["history:/data"]
 
   prometheus:
     image: prom/prometheus:v2.53.0
@@ -68,3 +110,6 @@ volumes:
   distkv1:
   distkv2:
   distkv3:
+  distkv4:
+  distkv5:
+  history:

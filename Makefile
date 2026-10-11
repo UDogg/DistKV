@@ -7,7 +7,7 @@ LDFLAGS := -s -w \
 	-X github.com/UDogg/DistKV/internal/version.Commit=$(COMMIT)
 IMAGE   ?= distkv:$(VERSION)
 
-.PHONY: all build test test-short race chaos bench fuzz lint fmt vet cover cluster cluster-stop docker compose-up compose-down clean help
+.PHONY: all build test test-short race chaos bench fuzz lint fmt vet cover cluster cluster-stop docker compose-up compose-down clean help demo ui ui-pages polyglot sdk-python sdk-typescript sdk-rust top vectors
 
 all: lint test build ## Lint, test and build
 
@@ -57,14 +57,41 @@ cluster-stop: ## Stop the local cluster
 docker: ## Build the container image
 	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE) .
 
-compose-up: ## Run a 3-node cluster with Prometheus and Grafana via docker compose
+compose-up: ## 5 nodes + traffic + historian + Prometheus + Grafana via docker compose
 	docker compose -f deploy/docker-compose.yml up -d --build
 
 compose-down: ## Tear down the docker compose cluster
 	docker compose -f deploy/docker-compose.yml down -v
 
+demo: build ## ⭐ Run the full local demo: 5 nodes + traffic + dashboard on http://localhost:8080
+	bin/distkv-demo --fresh
+
+top: ## Live terminal view of the local demo cluster (Rust)
+	cargo run --quiet --release --manifest-path clients/rust/Cargo.toml --bin distkv-top -- --endpoints http://127.0.0.1:7101,http://127.0.0.1:7102
+
+ui: ## Rebuild the embedded TypeScript dashboard (needs Node 18+)
+	npm ci --prefix web/dashboard --silent && npm run build --prefix web/dashboard
+
+ui-pages: ## Build the simulation-mode dashboard for static hosting (dist-pages/)
+	npm ci --prefix web/dashboard --silent && npm run pages --prefix web/dashboard
+
+vectors: ## Regenerate cross-language routing vectors (only if routing changed on purpose!)
+	$(GO) test ./internal/cluster -run TestRoutingVectors -update
+
+sdk-python: ## Python SDK + historian tests
+	cd clients/python && python3 -W error::ResourceWarning -m unittest discover -s tests
+
+sdk-typescript: ## TypeScript SDK tests
+	cd clients/typescript && npm ci --silent && npm test
+
+sdk-rust: ## Rust crate tests, fmt and clippy
+	cd clients/rust && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+
+polyglot: sdk-python sdk-typescript sdk-rust ## All non-Go tests (SDKs, dashboard type-check)
+	npm ci --prefix web/dashboard --silent && npm run typecheck --prefix web/dashboard
+
 clean: ## Remove build output and local cluster data
-	rm -rf bin dist coverage.out
+	rm -rf bin dist dist-pages coverage.out .demo clients/rust/target clients/typescript/dist clients/typescript/build
 	scripts/cluster.sh clean >/dev/null 2>&1 || true
 
 help: ## Show this help

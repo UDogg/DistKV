@@ -1,0 +1,30 @@
+name: Bug report
+description: Something is wrong (wrong results, crashes, unavailability)
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Include the commands you ran and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      placeholder: "make demo, then kill n2 and partition n4 within 2 seconds…"
+  - type: input
+    id: version
+    attributes:
+      label: Version (`distkv --version`)
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / `distkvctl cluster` output
+      render: text
+  - type: dropdown
+    id: safety
+    attributes:
+      label: Could this be a consistency (safety) bug?
+      options: ["No", "Maybe", "Yes: data loss, stale or divergent reads"]

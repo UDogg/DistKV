@@ -31,6 +31,9 @@ Precedence: **flags > environment > config file > defaults**.
 | `--shutdown-timeout` | 15s | Budget for graceful hand-off on SIGTERM. |
 | `--log-level`, `--log-format` | info, text | `json` for log shippers. |
 | `--pprof` | false | Expose `/debug/pprof`. |
+| `--enable-fault-injection` | false | Expose `/v1/admin/faults` (partition, drop, delay). Demos and chaos testing only. |
+| `--cors-origin` | – | `Access-Control-Allow-Origin` value, for dashboards served from another origin. |
+| `--disable-ui` | false | Don't serve the embedded dashboard at `/ui/`. |
 | `--tls-cert`, `--tls-key` | – | Serve HTTPS (TLS 1.3). The same certificate is presented to peers. Member addresses must be `https://`. |
 | `--tls-ca` | – | CA bundle used to verify peers. Enables mutual TLS: Raft and admin endpoints then require a client certificate signed by this CA. |
 | `--tls-client-auth` | false | Require client certificates on **every** connection, the KV API included. |

@@ -99,6 +99,9 @@ Every non-2xx response has a JSON body:
 | `GET /v1/cluster` | Cluster-wide view aggregated from all nodes: spec, per-shard leader/term/commit, per-node reachability and leader counts |
 | `GET /v1/status` | This node's view of each local shard: role, term, indices, followers' match index, lag and last contact |
 | `POST /v1/admin/shards/{id}/transfer-leader?to=nID` | Move leadership (send to the current leader; omit `to` to pick the best peer) |
+| `GET /v1/events?interval=1s` | **Server-Sent Events** stream of the `/v1/cluster` document (event `cluster`) with per-node live load (`load`: reads/writes/errors/forwarded per second, p50/p99/p99.9) and per-shard follower lag. Used by the dashboard |
+| `GET/POST /v1/admin/faults` | Fault injection (only with `--enable-fault-injection`): `{"isolated":bool,"drop_percent":0-100,"delay_ms":0-10000}` partitions the node from its peers, or drops or delays its Raft messages. Client traffic is unaffected |
+| `GET /ui/` | The embedded live dashboard (disable with `--disable-ui`) |
 | `GET /healthz` | Liveness: the process is serving |
 | `GET /readyz` | Readiness: every local shard has a known leader and the node isn't draining |
 | `GET /metrics` | Prometheus metrics |

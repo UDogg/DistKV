@@ -25,7 +25,11 @@ fn spark(values: &VecDeque<f64>, width: usize) -> String {
     const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
     let max = values.iter().cloned().fold(1.0, f64::max);
     let start = values.len().saturating_sub(width);
-    values.iter().skip(start).map(|v| BARS[((v / max) * 7.0).round().clamp(0.0, 7.0) as usize]).collect()
+    values
+        .iter()
+        .skip(start)
+        .map(|v| BARS[((v / max) * 7.0).round().clamp(0.0, 7.0) as usize])
+        .collect()
 }
 
 fn fmt_ms(v: f64) -> String {
@@ -42,21 +46,34 @@ fn fmt_ms(v: f64) -> String {
 
 fn render(st: &Value, ops_hist: &VecDeque<f64>, p99_hist: &VecDeque<f64>) -> String {
     let mut out = String::new();
-    let members: Vec<&str> = st.get("spec").get("members").as_array().iter().map(|m| m.get("id").as_str()).collect();
-    let color = |id: &str| COLORS[members.iter().position(|m| *m == id).unwrap_or(0) % COLORS.len()];
+    let members: Vec<&str> = st
+        .get("spec")
+        .get("members")
+        .as_array()
+        .iter()
+        .map(|m| m.get("id").as_str())
+        .collect();
+    let color =
+        |id: &str| COLORS[members.iter().position(|m| *m == id).unwrap_or(0) % COLORS.len()];
     let load = st.get("load");
     let ops = load.get("reads_per_sec").as_f64() + load.get("writes_per_sec").as_f64();
     let shards = st.get("shards").as_array();
     let healthy = st.get("healthy_shards").as_u64() as usize;
     let nodes = st.get("nodes").as_array();
-    let up = nodes.iter().filter(|n| n.get("reachable").as_bool()).count();
+    let up = nodes
+        .iter()
+        .filter(|n| n.get("reachable").as_bool())
+        .count();
 
     let status = if healthy == shards.len() && up == nodes.len() {
         format!("{GREEN}{BOLD}● HEALTHY{RESET}")
     } else if healthy == shards.len() {
         format!("{YELLOW}{BOLD}● DEGRADED{RESET}")
     } else {
-        format!("{RED}{BOLD}● FAILOVER ({} shards without leader){RESET}", shards.len() - healthy)
+        format!(
+            "{RED}{BOLD}● FAILOVER ({} shards without leader){RESET}",
+            shards.len() - healthy
+        )
     };
     out += &format!(
         "{BOLD}{}DistKV{RESET}  {status}   {DIM}cluster {} · via {}{RESET}\n\n",
@@ -76,8 +93,16 @@ fn render(st: &Value, ops_hist: &VecDeque<f64>, p99_hist: &VecDeque<f64>) -> Str
         nodes.len()
     );
 
-    out += &format!("  {BOLD}{:<6} {:<24} {:<10} {:>5} {:>9} {:>9}  {:<20}{RESET}\n", "NODE", "ADDRESS", "STATE", "LEADS", "OPS/S", "P99", "LEADERSHIP");
-    let max_lead = nodes.iter().map(|n| n.get("shards_led").as_u64()).max().unwrap_or(1).max(1);
+    out += &format!(
+        "  {BOLD}{:<6} {:<24} {:<10} {:>5} {:>9} {:>9}  {:<20}{RESET}\n",
+        "NODE", "ADDRESS", "STATE", "LEADS", "OPS/S", "P99", "LEADERSHIP"
+    );
+    let max_lead = nodes
+        .iter()
+        .map(|n| n.get("shards_led").as_u64())
+        .max()
+        .unwrap_or(1)
+        .max(1);
     for n in nodes {
         let id = n.get("id").as_str();
         let c = color(id);
@@ -114,7 +139,11 @@ fn render(st: &Value, ops_hist: &VecDeque<f64>, p99_hist: &VecDeque<f64>) -> Str
         if leader.is_empty() {
             out += &format!("{RED}{BOLD} ✕{:<2}{RESET}", s.get("shard").as_u64());
         } else {
-            out += &format!("{} {:<3}{RESET}", bg(color(leader)), s.get("shard").as_u64());
+            out += &format!(
+                "{} {:<3}{RESET}",
+                bg(color(leader)),
+                s.get("shard").as_u64()
+            );
         }
         out.push(' ');
         if (i + 1) % 16 == 0 {
@@ -125,13 +154,14 @@ fn render(st: &Value, ops_hist: &VecDeque<f64>, p99_hist: &VecDeque<f64>) -> Str
     for m in &members {
         out += &format!("{}■{RESET}{DIM} {m}  ", fg(color(m)));
     }
-    out += &format!("· q to quit (Ctrl-C){RESET}\n");
+    out += &format!("· Ctrl-C to quit{RESET}\n");
     out
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mut endpoints = std::env::var("DISTKV_ENDPOINTS").unwrap_or_else(|_| "http://127.0.0.1:7001".into());
+    let mut endpoints =
+        std::env::var("DISTKV_ENDPOINTS").unwrap_or_else(|_| "http://127.0.0.1:7001".into());
     let mut interval = 1.0f64;
     let mut once = false;
     let mut i = 1;
@@ -157,14 +187,20 @@ fn main() {
         }
         i += 1;
     }
-    let eps: Vec<&str> = endpoints.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+    let eps: Vec<&str> = endpoints
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
     let mut ops_hist = VecDeque::new();
     let mut p99_hist = VecDeque::new();
     loop {
         match distkv::cluster_status(&eps, Duration::from_secs(2)) {
             Ok(st) => {
                 let load = st.get("load");
-                ops_hist.push_back(load.get("reads_per_sec").as_f64() + load.get("writes_per_sec").as_f64());
+                ops_hist.push_back(
+                    load.get("reads_per_sec").as_f64() + load.get("writes_per_sec").as_f64(),
+                );
                 p99_hist.push_back(load.get("p99_ms").as_f64());
                 if ops_hist.len() > 60 {
                     ops_hist.pop_front();

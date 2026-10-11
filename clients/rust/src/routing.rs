@@ -38,16 +38,29 @@ pub struct Topology {
 }
 
 impl Topology {
-    pub fn new(mut members: Vec<Member>, shards: usize, replication_factor: usize, virtual_nodes: usize) -> Result<Self, String> {
+    pub fn new(
+        mut members: Vec<Member>,
+        shards: usize,
+        replication_factor: usize,
+        virtual_nodes: usize,
+    ) -> Result<Self, String> {
         if shards == 0 {
             return Err("shards must be positive".into());
         }
         members.sort_by(|a, b| a.id.cmp(&b.id));
-        let rf = if replication_factor == 0 { members.len().min(3) } else { replication_factor };
+        let rf = if replication_factor == 0 {
+            members.len().min(3)
+        } else {
+            replication_factor
+        };
         if rf > members.len() {
             return Err("replication factor exceeds member count".into());
         }
-        let vn = if virtual_nodes == 0 { DEFAULT_VIRTUAL_NODES } else { virtual_nodes };
+        let vn = if virtual_nodes == 0 {
+            DEFAULT_VIRTUAL_NODES
+        } else {
+            virtual_nodes
+        };
         let mut ring = Vec::with_capacity(shards * vn);
         for s in 0..shards {
             for v in 0..vn {
@@ -55,21 +68,37 @@ impl Topology {
             }
         }
         ring.sort();
-        let mut t = Topology { members, shards, replication_factor: rf, virtual_nodes: vn, ring, replicas: Vec::new() };
+        let mut t = Topology {
+            members,
+            shards,
+            replication_factor: rf,
+            virtual_nodes: vn,
+            ring,
+            replicas: Vec::new(),
+        };
         t.replicas = (0..shards).map(|s| t.rendezvous(s)).collect();
         t.balance_preferred();
         Ok(t)
     }
 
     fn rendezvous(&self, shard: usize) -> Vec<String> {
-        let mut scored: Vec<(u64, &str)> = self.members.iter().map(|m| (hash64(&format!("{shard}/{}", m.id)), m.id.as_str())).collect();
+        let mut scored: Vec<(u64, &str)> = self
+            .members
+            .iter()
+            .map(|m| (hash64(&format!("{shard}/{}", m.id)), m.id.as_str()))
+            .collect();
         scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(b.1)));
-        scored.into_iter().take(self.replication_factor).map(|(_, id)| id.to_string()).collect()
+        scored
+            .into_iter()
+            .take(self.replication_factor)
+            .map(|(_, id)| id.to_string())
+            .collect()
     }
 
     /// Spread preferred leaders evenly (see Go `Topology.balancePreferred`).
     fn balance_preferred(&mut self) {
-        let mut count: HashMap<String, usize> = self.members.iter().map(|m| (m.id.clone(), 0)).collect();
+        let mut count: HashMap<String, usize> =
+            self.members.iter().map(|m| (m.id.clone(), 0)).collect();
         for reps in self.replicas.iter_mut() {
             let mut best = 0;
             for i in 1..reps.len() {

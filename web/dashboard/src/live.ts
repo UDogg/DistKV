@@ -19,7 +19,12 @@ export class LiveBackend implements Backend {
   readonly mode = "live" as const;
   private demo: DemoInfo | null = null;
 
-  constructor(private readonly base: string = "") {}
+  /**
+   * @param base API origin ("" = same origin, e.g. the demo supervisor)
+   * @param historianUrl direct historian URL (?historian=...), used when the
+   *        dashboard is served by a node rather than the demo supervisor
+   */
+  constructor(private readonly base: string = "", private readonly historianUrl: string | null = null) {}
 
   subscribe(onSnapshot: (s: ClusterStatus) => void, onConn: (c: ConnState) => void): void {
     const es = new EventSource(`${this.base}/v1/events?interval=1s`);
@@ -86,9 +91,10 @@ export class LiveBackend implements Backend {
   }
 
   private async historian<T>(path: string): Promise<T | null> {
-    if (!this.demo?.historian) return null;
+    const root = this.historianUrl ?? (this.demo?.historian ? `${this.base}/historian` : null);
+    if (!root) return null;
     try {
-      const r = await fetch(`${this.base}/historian${path}`, { cache: "no-store" });
+      const r = await fetch(`${root}${path}`, { cache: "no-store" });
       return r.ok ? ((await r.json()) as T) : null;
     } catch {
       return null;

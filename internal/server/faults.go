@@ -31,10 +31,6 @@ func (f *faults) get() api.Faults {
 	return api.Faults{Isolated: f.isolated.Load(), DropPercent: int(f.dropPercent.Load()), DelayMs: int(f.delayMs.Load())}
 }
 
-func (f *faults) active() bool {
-	return f.isolated.Load() || f.dropPercent.Load() > 0 || f.delayMs.Load() > 0
-}
-
 // apply returns errInjected if a peer message should be dropped, after any
 // configured delay.
 func (f *faults) apply() error {

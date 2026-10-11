@@ -8,4 +8,4 @@ rule_files:
 scrape_configs:
   - job_name: distkv
     static_configs:
-      - targets: ["distkv1:7001", "distkv2:7001", "distkv3:7001"]
+      - targets: ["distkv1:7001", "distkv2:7001", "distkv3:7001", "distkv4:7001", "distkv5:7001"]

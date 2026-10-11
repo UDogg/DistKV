@@ -1,0 +1,24 @@
+{
+  // One-click cloud demo: open this repository in GitHub Codespaces
+  // (free monthly quota), wait for the build, then run `make demo`.
+  // The dashboard opens automatically on the forwarded port 8080.
+  "name": "DistKV (Go · TypeScript · Python · Rust)",
+  "image": "mcr.microsoft.com/devcontainers/go:1-1.24-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" },
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.13" },
+    "ghcr.io/devcontainers/features/rust:1": {}
+  },
+  "postCreateCommand": "make build && (cd clients/rust && cargo build --release --quiet)",
+  "postAttachCommand": "echo '\\n  Run: make demo   →  dashboard on port 8080\\n'",
+  "forwardPorts": [8080, 7101, 3000],
+  "portsAttributes": {
+    "8080": { "label": "DistKV dashboard", "onAutoForward": "openBrowser" },
+    "7101": { "label": "node n1 API" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["golang.go", "rust-lang.rust-analyzer", "ms-python.python", "dbaeumer.vscode-eslint"]
+    }
+  }
+}

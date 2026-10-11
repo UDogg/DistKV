@@ -54,7 +54,7 @@ async function pickBackend(): Promise<Backend> {
   const api = params.get("api")?.replace(/\/+$/, "") ?? "";
   try {
     const r = await fetch(`${api}/v1/cluster`, { signal: AbortSignal.timeout(2500) });
-    if (r.ok) return new LiveBackend(api);
+    if (r.ok) return new LiveBackend(api, params.get("historian")?.replace(/\/+$/, "") ?? null);
   } catch {
     /* fall through to simulation */
   }
@@ -108,7 +108,11 @@ class App {
   }
 
   start(): void {
-    if (this.be.mode === "sim") $("sim-banner").hidden = false;
+    if (this.be.mode === "sim") {
+      $("sim-banner").hidden = false;
+      $("chaos-sub").textContent = "simulated failures, real routing";
+      $("mode-pill").textContent = "SIM";
+    }
     this.be.subscribe((s) => this.onSnapshot(s), (c) => this.onConn(c));
     setInterval(() => this.pollDemo(), 2000);
     // History needs to know whether a historian is running, so it waits
@@ -364,7 +368,7 @@ class App {
       ? list
           .map((e) => {
             const [icon, cls] = EVENT_STYLE[e.kind] ?? ["•", ""];
-            return `<li class="${cls}"><time>${new Date(e.ts).toLocaleTimeString()}</time><span>${icon}</span><span>${esc(e.detail)}</span></li>`;
+            return `<li class="${cls}"><time>${new Date(e.ts).toLocaleTimeString([], { hour12: false })}</time><span>${icon}</span><span>${esc(e.detail)}</span></li>`;
           })
           .join("")
       : `<li><time></time><span>✨</span><span class="muted">All quiet. Try the chaos buttons.</span></li>`;

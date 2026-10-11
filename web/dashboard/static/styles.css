@@ -166,6 +166,7 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 .node-head .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--node); box-shadow: 0 0 12px var(--node); }
 .node-head strong { font-size: 16px; }
 .node-head .state { margin-left: auto; font-size: 11px; font-weight: 700; }
+.node.down .node-head .state { margin-right: 46px; }
 .node-meta { color: var(--muted); font-size: 11px; font-family: var(--mono); margin: 4px 0 10px; }
 .node-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
 .node-stats div { background: rgba(140, 150, 255, .06); border-radius: 8px; padding: 6px 8px; }

@@ -30,27 +30,47 @@ impl std::error::Error for Error {}
 impl Value {
     pub fn get(&self, key: &str) -> &Value {
         match self {
-            Value::Obj(kv) => kv.iter().find(|(k, _)| k == key).map(|(_, v)| v).unwrap_or(&Value::Null),
+            Value::Obj(kv) => kv
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v)
+                .unwrap_or(&Value::Null),
             _ => &Value::Null,
         }
     }
     pub fn as_f64(&self) -> f64 {
-        if let Value::Num(n) = self { *n } else { 0.0 }
+        if let Value::Num(n) = self {
+            *n
+        } else {
+            0.0
+        }
     }
     pub fn as_u64(&self) -> u64 {
         self.as_f64().max(0.0) as u64
     }
     pub fn as_str(&self) -> &str {
-        if let Value::Str(s) = self { s } else { "" }
+        if let Value::Str(s) = self {
+            s
+        } else {
+            ""
+        }
     }
     pub fn as_bool(&self) -> bool {
         matches!(self, Value::Bool(true))
     }
     pub fn as_array(&self) -> &[Value] {
-        if let Value::Arr(a) = self { a } else { &[] }
+        if let Value::Arr(a) = self {
+            a
+        } else {
+            &[]
+        }
     }
     pub fn as_object(&self) -> &[(String, Value)] {
-        if let Value::Obj(o) = self { o } else { &[] }
+        if let Value::Obj(o) = self {
+            o
+        } else {
+            &[]
+        }
     }
     pub fn is_null(&self) -> bool {
         matches!(self, Value::Null)
@@ -58,7 +78,11 @@ impl Value {
 }
 
 pub fn parse(s: &str) -> Result<Value, Error> {
-    let mut p = Parser { b: s.as_bytes(), i: 0, depth: 0 };
+    let mut p = Parser {
+        b: s.as_bytes(),
+        i: 0,
+        depth: 0,
+    };
     p.ws();
     let v = p.value()?;
     p.ws();
@@ -168,7 +192,10 @@ impl<'a> Parser<'a> {
         }
     }
     fn hex4(&mut self) -> Result<u32, Error> {
-        let s = self.b.get(self.i..self.i + 4).ok_or_else(|| self.err("short \\u escape"))?;
+        let s = self
+            .b
+            .get(self.i..self.i + 4)
+            .ok_or_else(|| self.err("short \\u escape"))?;
         let s = std::str::from_utf8(s).map_err(|_| self.err("bad \\u escape"))?;
         let v = u32::from_str_radix(s, 16).map_err(|_| self.err("bad \\u escape"))?;
         self.i += 4;
@@ -179,10 +206,17 @@ impl<'a> Parser<'a> {
         let mut out = String::new();
         loop {
             let start = self.i;
-            while self.i < self.b.len() && self.b[self.i] != b'"' && self.b[self.i] != b'\\' && self.b[self.i] >= 0x20 {
+            while self.i < self.b.len()
+                && self.b[self.i] != b'"'
+                && self.b[self.i] != b'\\'
+                && self.b[self.i] >= 0x20
+            {
                 self.i += 1;
             }
-            out.push_str(std::str::from_utf8(&self.b[start..self.i]).map_err(|_| self.err("invalid utf-8"))?);
+            out.push_str(
+                std::str::from_utf8(&self.b[start..self.i])
+                    .map_err(|_| self.err("invalid utf-8"))?,
+            );
             match self.peek() {
                 Some(b'"') => {
                     self.i += 1;
@@ -214,7 +248,9 @@ impl<'a> Parser<'a> {
                                 }
                                 cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
                             }
-                            out.push(char::from_u32(cp).ok_or_else(|| self.err("invalid code point"))?);
+                            out.push(
+                                char::from_u32(cp).ok_or_else(|| self.err("invalid code point"))?,
+                            );
                         }
                         _ => return Err(self.err("invalid escape")),
                     }
@@ -236,7 +272,10 @@ impl<'a> Parser<'a> {
             }
         }
         let s = std::str::from_utf8(&self.b[start..self.i]).unwrap();
-        s.parse::<f64>().map(Value::Num).map_err(|_| Error { pos: start, msg: "invalid number" })
+        s.parse::<f64>().map(Value::Num).map_err(|_| Error {
+            pos: start,
+            msg: "invalid number",
+        })
     }
 }
 
@@ -246,7 +285,8 @@ mod tests {
 
     #[test]
     fn parses_documents() {
-        let v = parse(r#"{"a": [1, -2.5e3, true, null], "s": "x\"y\u00e9\ud83d\ude80", "o": {}}"#).unwrap();
+        let v = parse(r#"{"a": [1, -2.5e3, true, null], "s": "x\"y\u00e9\ud83d\ude80", "o": {}}"#)
+            .unwrap();
         assert_eq!(v.get("a").as_array().len(), 4);
         assert_eq!(v.get("a").as_array()[1].as_f64(), -2500.0);
         assert_eq!(v.get("s").as_str(), "x\"yé🚀");
@@ -255,7 +295,16 @@ mod tests {
 
     #[test]
     fn rejects_garbage() {
-        for bad in ["", "{", "[1,]", "{\"a\" 1}", "tru", "\"unterminated", "1 2", "\"\\ud800\""] {
+        for bad in [
+            "",
+            "{",
+            "[1,]",
+            "{\"a\" 1}",
+            "tru",
+            "\"unterminated",
+            "1 2",
+            "\"\\ud800\"",
+        ] {
             assert!(parse(bad).is_err(), "{bad:?} should fail");
         }
     }

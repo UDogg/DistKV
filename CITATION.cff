@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use DistKV in research or teaching, please cite it."
+title: "DistKV: a Raft-based, sharded distributed key-value cache"
+type: software
+license: Apache-2.0
+repository-code: "https://github.com/UDogg/DistKV"
+version: 0.2.0
+authors:
+  - name: "DistKV contributors"
+keywords: [raft, consensus, distributed-systems, key-value-store, sharding]

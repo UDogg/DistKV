@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.2.0: polyglot, live dashboard, chaos lab
+
+### New
+- **Live dashboard** (TypeScript, embedded at `/ui/`): SSE-driven charts, node cards, a
+  consistent-hash ring visualisation with a key finder, shard matrix, incident timeline, KV
+  playground, SQLite history panel, dark/light themes, and a simulation mode for GitHub Pages.
+- **`distkv-demo`**: supervises N real node processes with kill -9 / stop / start /
+  partition / packet-loss controls, an adjustable traffic generator, client-observed availability,
+  and a failover-aware API proxy.
+- **Fault injection** (`--enable-fault-injection`, `/v1/admin/faults`): isolate a node, or drop
+  or delay its Raft messages.
+- **`/v1/events`** Server-Sent Events stream with per-node live load and per-shard follower lag.
+- **Python** SDK and the **SQLite historian**; **TypeScript** SDK; **Rust** SDK and `distkv-top`.
+- **Golden routing vectors** checked by all four languages.
+- 5-node Compose stack with load generator and historian; Codespaces devcontainer; Pages,
+  Polyglot, Release and CodeQL workflows; Dependabot; issue and PR templates.
+
+### Fixed
+- Preferred leaders are now balanced. Pure rendezvous ranking left one of 5 nodes preferred for
+  none of 24 shards, idling a fifth of the cluster's write capacity. Routing vectors regenerated.
+- The client now tries other replicas when a node answers `no_leader` (a partitioned former
+  leader was being retried until timeout).
+
 ## v0.1.0 — initial release
 
 ### Consensus
