@@ -1,15 +1,18 @@
 # syntax=docker/dockerfile:1.7
 
 # ---- build ------------------------------------------------------------------
-FROM golang:1.24-alpine AS build
+# Build on the native platform and cross-compile, so multi-arch release
+# images don't run the Go toolchain under QEMU emulation.
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS build
 WORKDIR /src
 ARG VERSION=dev
 ARG COMMIT=unknown
+ARG TARGETOS TARGETARCH
 COPY go.mod ./
 RUN go mod download
 COPY . .
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
       -ldflags "-s -w -X github.com/UDogg/DistKV/internal/version.Version=${VERSION} -X github.com/UDogg/DistKV/internal/version.Commit=${COMMIT}" \
       -o /out/ ./cmd/... \
  && mkdir -p /out/data

@@ -27,8 +27,13 @@
   packet loss, persistence across `down`/`up`).
 - `docs/run.html`: an HTML run guide, also published on GitHub Pages.
 - The demo prints `http://localhost:PORT` when listening on all interfaces.
+- The image cross-compiles on the build host (`--platform=$BUILDPLATFORM`), so multi-arch
+  release images no longer run the Go toolchain under QEMU (arm64 build: ~35 s).
+- CI cancels superseded runs of the same branch and caches Go builds keyed on `go.mod`.
 
 ### Fixed
+- `go.mod` declared Go 1.23, but the tests use Go 1.24 APIs (`testing.T.Context`). CI installs
+  the version from `go.mod`, so the tests would not have compiled there. The minimum is now Go 1.24.
 - Preferred leaders are now balanced. Pure rendezvous ranking left one of 5 nodes preferred for
   none of 24 shards, idling a fifth of the cluster's write capacity. Routing vectors regenerated.
 - The client now tries other replicas when a node answers `no_leader` (a partitioned former

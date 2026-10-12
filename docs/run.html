@@ -201,7 +201,7 @@ html { scroll-behavior: smooth; }
           <p>5 node containers, a load generator, the SQLite historian, Prometheus and Grafana.</p>
         </a>
         <a class="route" href="#local">
-          <span class="tag">Go 1.23+</span>
+          <span class="tag">Go 1.24+</span>
           <h3>Without Docker</h3>
           <p><code>make demo</code> runs real processes on your machine, with the history panel included.</p>
         </a>
@@ -349,7 +349,7 @@ node_down 1 · node_up 1 · partitioned 1 · healed 1</pre></div>
 
     <section id="local">
       <h2>Without Docker</h2>
-      <p class="sub">Needs Go 1.23 or newer. Python 3.9+ is optional: if it's present, the history panel runs too. The nodes are real operating-system processes, so <b>kill -9</b> sends a real SIGKILL.</p>
+      <p class="sub">Needs Go 1.24 or newer. Python 3.9+ is optional: if it's present, the history panel runs too. The nodes are real operating-system processes, so <b>kill -9</b> sends a real SIGKILL.</p>
       <div class="term"><button class="copy" type="button">Copy</button><pre><span class="p">$ </span>make demo                <span class="c"># dashboard on http://localhost:8080</span>
 <span class="p">$ </span>make top                 <span class="c"># optional, Rust terminal monitor (needs cargo)</span></pre></div>
       <p>Prefer the cloud? Open the repository in <a href="https://codespaces.new/UDogg/DistKV">GitHub Codespaces</a>, wait for the build, then run <code>make demo</code>. Port 8080 opens in your browser automatically.</p>

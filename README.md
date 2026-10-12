@@ -24,7 +24,7 @@ Every key lives in one of many Raft groups spread across the cluster. Kill any n
 <tr>
 <td align="center" width="33%">🌐<br><b>See it in your browser</b><br><sub>Simulation mode on GitHub Pages: nothing to install</sub><br><br><a href="https://udogg.github.io/DistKV/"><img src="https://img.shields.io/badge/open-live%20demo-7c5cff?style=for-the-badge"></a></td>
 <td align="center" width="33%">☁️<br><b>Run the real thing in the cloud</b><br><sub>Free Codespaces quota, then <code>make demo</code></sub><br><br><a href="https://codespaces.new/UDogg/DistKV"><img src="https://github.com/codespaces/badge.svg" height="28"></a></td>
-<td align="center" width="33%">🐳<br><b>Run it locally</b><br><sub>one container, or <code>make demo</code> with Go 1.23+</sub><br><br><code>make docker-demo</code><br><sub>→ http://localhost:8080</sub></td>
+<td align="center" width="33%">🐳<br><b>Run it locally</b><br><sub>one container, or <code>make demo</code> with Go 1.24+</sub><br><br><code>make docker-demo</code><br><sub>→ http://localhost:8080</sub></td>
 </tr>
 </table>
 
