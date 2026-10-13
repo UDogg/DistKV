@@ -136,3 +136,18 @@ func TestDashboardServed(t *testing.T) {
 		t.Fatalf("GET / -> %d %s", resp.StatusCode, resp.Request.URL.Path)
 	}
 }
+
+// A shard number beyond uint32 must not wrap around to a hosted shard.
+func TestTransferRejectsOutOfRangeShard(t *testing.T) {
+	tc := testcluster.Start(t, testcluster.Options{Nodes: 1, Shards: 1})
+	for _, shard := range []string{"4294967296", "-1", "x"} {
+		resp, err := http.Post(tc.Endpoints()[0]+"/v1/admin/shards/"+shard+"/transfer-leader", "", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("shard %s: status %d, want 404", shard, resp.StatusCode)
+		}
+	}
+}

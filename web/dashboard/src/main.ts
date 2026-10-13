@@ -16,6 +16,13 @@ function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
+/** Strips trailing slashes in linear time (a /\/+$/ regex can backtrack quadratically). */
+function trimSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47) end--;
+  return s.slice(0, end);
+}
+
 function fmtNum(v: number): string {
   if (v >= 10_000) return `${(v / 1000).toFixed(1)}k`;
   if (v >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -51,10 +58,10 @@ async function pickBackend(): Promise<Backend> {
   const params = new URLSearchParams(location.search);
   const meta = document.querySelector<HTMLMetaElement>('meta[name="distkv-mode"]')?.content;
   if (params.has("sim") || meta === "sim" || location.protocol === "file:") return new SimBackend();
-  const api = params.get("api")?.replace(/\/+$/, "") ?? "";
+  const api = trimSlashes(params.get("api") ?? "");
   try {
     const r = await fetch(`${api}/v1/cluster`, { signal: AbortSignal.timeout(2500) });
-    if (r.ok) return new LiveBackend(api, params.get("historian")?.replace(/\/+$/, "") ?? null);
+    if (r.ok) return new LiveBackend(api, params.has("historian") ? trimSlashes(params.get("historian")!) : null);
   } catch {
     /* fall through to simulation */
   }

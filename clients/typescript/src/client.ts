@@ -92,6 +92,13 @@ class Sessions {
   }
 }
 
+/** Strips trailing slashes in linear time (a /\/+$/ regex can backtrack quadratically). */
+function trimSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47) end--;
+  return s.slice(0, end);
+}
+
 /**
  * Smart DistKV client: routes each key to its shard leader, follows 421
  * hints, retries with backoff and makes writes exactly-once.
@@ -107,7 +114,7 @@ export class Client {
   private rr = 0;
 
   private constructor(opts: ClientOptions) {
-    this.endpoints = opts.endpoints.map((e) => (e.includes("://") ? e : `http://${e}`).replace(/\/+$/, ""));
+    this.endpoints = opts.endpoints.map((e) => trimSlashes(e.includes("://") ? e : `http://${e}`));
     if (this.endpoints.length === 0) throw new Error("no endpoints");
     this.timeoutMs = opts.timeoutMs ?? 5000;
     this.smart = opts.smart ?? true;

@@ -219,7 +219,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 // handleTransfer serves POST /v1/admin/shards/{shard}/transfer-leader?to=ID.
 func (s *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
-	n, err := strconv.Atoi(r.PathValue("shard"))
+	n, err := strconv.ParseUint(r.PathValue("shard"), 10, 32)
 	g, ok := s.groups[cluster.ShardID(n)]
 	if err != nil || !ok {
 		writeError(w, http.StatusNotFound, api.ErrorResponse{Error: "shard not hosted on this node", Code: api.CodeNotFound})
