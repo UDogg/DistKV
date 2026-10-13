@@ -3,7 +3,7 @@
 # ---- build ------------------------------------------------------------------
 # Build on the native platform and cross-compile, so multi-arch release
 # images don't run the Go toolchain under QEMU emulation.
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
 WORKDIR /src
 ARG VERSION=dev
 ARG COMMIT=unknown
