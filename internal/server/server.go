@@ -150,6 +150,9 @@ type Server struct {
 	live    *liveStats
 	faults  faults
 
+	// lifeMu makes Serve's start-up and the start of Shutdown/Kill mutually
+	// exclusive: a stop either follows a complete start or prevents it.
+	lifeMu   sync.Mutex
 	started  atomic.Bool
 	draining atomic.Bool
 	stopBg   chan struct{}
@@ -218,6 +221,12 @@ func New(cfg Config) (*Server, error) {
 	}
 	s.m = newServerMetrics(s)
 	s.handler = s.routes()
+	s.httpSrv = &http.Server{
+		Handler:           s.handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		ErrorLog:          slog.NewLogLogger(s.logger.Handler(), slog.LevelDebug),
+	}
 	s.logger.Info("node initialised", "shards_hosted", len(s.groups), "total_shards", topo.NumShards(),
 		"replication_factor", topo.Spec().ReplicationFactor, "fingerprint", topo.Fingerprint())
 	return s, nil
@@ -287,11 +296,11 @@ func (s *Server) Serve(l net.Listener) error {
 	if !s.started.CompareAndSwap(false, true) {
 		return errors.New("server: already started")
 	}
-	s.httpSrv = &http.Server{
-		Handler:           s.handler,
-		ReadHeaderTimeout: 5 * time.Second,
-		IdleTimeout:       2 * time.Minute,
-		ErrorLog:          slog.NewLogLogger(s.logger.Handler(), slog.LevelDebug),
+	s.lifeMu.Lock()
+	if s.draining.Load() {
+		s.lifeMu.Unlock()
+		l.Close()
+		return nil
 	}
 	if s.cfg.TLS != nil {
 		l = tls.NewListener(l, s.cfg.TLS)
@@ -300,6 +309,7 @@ func (s *Server) Serve(l net.Listener) error {
 		g.node.Start()
 	}
 	s.startBackground()
+	s.lifeMu.Unlock()
 	s.logger.Info("serving", "addr", l.Addr().String(), "advertise", s.self.Addr)
 	err := s.httpSrv.Serve(l)
 	if errors.Is(err, http.ErrServerClosed) {
@@ -321,7 +331,7 @@ func (s *Server) ListenAndServe(addr string) error {
 // a healthy peer (so clients see no election gap), drains in-flight
 // requests and closes storage.
 func (s *Server) Shutdown(ctx context.Context) error {
-	if !s.draining.CompareAndSwap(false, true) {
+	if !s.beginStop() {
 		return nil
 	}
 	s.logger.Info("shutting down: transferring leadership")
@@ -330,10 +340,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	close(s.stopBg)
 	s.bgWG.Wait()
 
-	var err error
-	if s.httpSrv != nil {
-		err = s.httpSrv.Shutdown(ctx)
-	}
+	err := s.httpSrv.Shutdown(ctx)
 	s.closeGroups()
 	s.transport.Close()
 	s.client.CloseIdleConnections()
@@ -344,17 +351,23 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // Kill stops the node abruptly without handing off leadership (used by
 // fault-injection tests to simulate a crash).
 func (s *Server) Kill() {
-	if !s.draining.CompareAndSwap(false, true) {
+	if !s.beginStop() {
 		return
 	}
 	close(s.stopBg)
-	if s.httpSrv != nil {
-		s.httpSrv.Close()
-	}
+	s.httpSrv.Close()
 	s.bgWG.Wait()
 	s.closeGroups()
 	s.transport.Close()
 	s.client.CloseIdleConnections()
+}
+
+// beginStop marks the node as draining; it reports false if it already was.
+// It waits for an in-progress Serve start-up to finish.
+func (s *Server) beginStop() bool {
+	s.lifeMu.Lock()
+	defer s.lifeMu.Unlock()
+	return s.draining.CompareAndSwap(false, true)
 }
 
 func (s *Server) closeGroups() {
