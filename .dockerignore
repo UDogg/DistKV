@@ -1,0 +1,6 @@
+bin/
+dist/
+.cluster/
+.git/
+*.prof
+coverage.out

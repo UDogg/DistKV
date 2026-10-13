@@ -1,0 +1,21 @@
+{
+  "name": "@distkv/client",
+  "version": "0.2.0",
+  "description": "TypeScript/JavaScript client for DistKV, a Raft-based sharded key-value cache",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node --test build/test/*.test.js",
+    "clean": "rm -rf dist build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

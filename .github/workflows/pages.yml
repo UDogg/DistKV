@@ -1,0 +1,40 @@
+# Publishes the dashboard in simulation mode to GitHub Pages: a free, always-on
+# live demo that needs no servers. (Enable Pages → "GitHub Actions" once in
+# the repository settings.)
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", "clients/typescript/src/**", "docs/run.html", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix web/dashboard
+      - run: npm run pages --prefix web/dashboard
+      - name: Add the run guide (https://<owner>.github.io/DistKV/run.html)
+        run: cp docs/run.html dist-pages/run.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist-pages
+      - id: deployment
+        uses: actions/deploy-pages@v4

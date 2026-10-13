@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "distkv"
+version = "0.2.0"
+description = "Python client and historian for DistKV, a Raft-based sharded key-value cache"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+dependencies = []  # standard library only
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Topic :: Database",
+  "Typing :: Typed",
+]
+
+[project.scripts]
+distkv-py = "distkv.__main__:main"
+distkv-historian = "distkv.historian:main"
+
+[tool.setuptools.packages.find]
+include = ["distkv*"]
+
+[tool.setuptools.package-data]
+distkv = ["py.typed"]

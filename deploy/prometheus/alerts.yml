@@ -1,0 +1,49 @@
+groups:
+  - name: distkv
+    rules:
+      - alert: DistKVShardWithoutLeader
+        # Every replica of the shard reports that it knows no leader.
+        expr: max by (shard) (distkv_raft_has_leader) == 0
+        for: 30s
+        labels: { severity: critical }
+        annotations:
+          summary: "Shard {{ $labels.shard }} has no Raft leader"
+          description: "Writes and linearizable reads for this shard are unavailable."
+
+      - alert: DistKVNodeNotReady
+        expr: distkv_ready == 0
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "Node {{ $labels.node }} is not ready"
+
+      - alert: DistKVHighP99Latency
+        expr: histogram_quantile(0.99, sum by (le, op) (rate(distkv_request_duration_seconds_bucket[5m]))) > 0.010
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "p99 {{ $labels.op }} latency above 10ms SLO"
+
+      - alert: DistKVAvailabilitySLOBurn
+        # 99.9% availability SLO: alert when the 1h error ratio would burn
+        # the monthly error budget 14.4x faster than allowed.
+        expr: |
+          sum(rate(distkv_requests_total{status=~"5.."}[1h]))
+            / sum(rate(distkv_requests_total[1h])) > (14.4 * 0.001)
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "DistKV is burning its 99.9% availability error budget"
+
+      - alert: DistKVFollowerLagging
+        expr: max by (shard, follower) (distkv_raft_follower_lag_entries) > 10000
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Follower {{ $labels.follower }} lags shard {{ $labels.shard }} by >10k entries"
+
+      - alert: DistKVFrequentElections
+        expr: sum(increase(distkv_raft_elections_total[10m])) > 20
+        labels: { severity: warning }
+        annotations:
+          summary: "Unusually many Raft elections (network or GC instability?)"

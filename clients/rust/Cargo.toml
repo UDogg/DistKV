@@ -1,0 +1,19 @@
+[package]
+name = "distkv"
+version = "0.2.0"
+edition = "2021"
+description = "Rust client and terminal monitor (distkv-top) for DistKV, a Raft-based sharded key-value cache"
+license = "Apache-2.0"
+repository = "https://github.com/UDogg/DistKV"
+keywords = ["raft", "key-value", "distributed", "cache"]
+
+# Standard library only: no dependencies.
+[dependencies]
+
+[[bin]]
+name = "distkv-top"
+path = "src/bin/distkv-top.rs"
+
+[profile.release]
+lto = true
+strip = true
