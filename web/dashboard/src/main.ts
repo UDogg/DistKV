@@ -4,6 +4,7 @@ import { TimeSeriesChart } from "./charts";
 import { EXPERIMENTS, GAMEDAY_CSS, gameDayDocument, gameDayHTML, gameDayMarkdown, score, type ExperimentCtx, type GameDayRun } from "./gameday";
 import { CONSISTENCY_GRACE_MS, describe, IncidentTracker, summarize, type Incident, type Transition } from "./incidents";
 import { LiveBackend } from "./live";
+import { Coach, Explainer, openWelcome, shouldWelcome, Tour, type Story } from "./guide";
 import { LogConsole, type Level } from "./logs";
 import { fmtDuration, REPORT_CSS, reportDocument, reportHTML, reportMarkdown } from "./report";
 import { RingView } from "./ring";
@@ -138,6 +139,18 @@ const EVENT_LEVEL: Record<string, Level> = {
   election: "warn",
 };
 
+/** The tooltip for each KPI tile, by its label. */
+const KPI_EXPLAIN: Record<string, string> = {
+  throughput: "kpi-throughput",
+  "p99 latency": "kpi-latency",
+  availability: "kpi-availability",
+  shards: "kpi-shards",
+  nodes: "kpi-nodes",
+  "leader moves": "kpi-leader-moves",
+  linearizability: "kpi-linearizable",
+  linearizable: "kpi-linearizable",
+};
+
 /** What a chaos action is called in alerts and reports. */
 const ACT_TEXT: Record<string, (id: string) => string> = {
   kill: (id) => `SIGKILL to ${id}`,
@@ -180,8 +193,12 @@ class App {
   private readonly gdSelected = new Set(EXPERIMENTS.map((e) => e.id));
   private monkey = false;
   private reportGameDay = false;
+  private readonly coach = new Coach();
+  private readonly tour = new Tour();
+  private welcomed = false;
 
   constructor(private readonly be: Backend) {
+    new Explainer();
     const style = document.createElement("style");
     style.textContent = REPORT_CSS + GAMEDAY_CSS;
     document.head.appendChild(style);
@@ -292,6 +309,12 @@ class App {
       return;
     }
     this.renderAll();
+    // Wait for the first demo-info answer too: it decides whether the chaos
+    // controls exist, which the welcome offers.
+    if (!this.welcomed && this.demoPolled) {
+      this.welcomed = true;
+      if (shouldWelcome()) this.welcome();
+    }
   }
 
   private stale = false;
@@ -404,7 +427,7 @@ class App {
     }
     const up = s.nodes.filter((n) => n.reachable).length;
     const kpi = (label: string, value: string, sub: string, cls = "", glow = "") =>
-      `<div class="kpi ${cls}" style="${glow ? `--glow:${glow}` : ""}"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
+      `<div class="kpi ${cls}" style="${glow ? `--glow:${glow}` : ""}" data-explain="${KPI_EXPLAIN[label.toLowerCase()] ?? ""}" tabindex="0"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
     const p99cls = s.load.p99_ms === 0 ? "" : s.load.p99_ms < 10 ? "good" : s.load.p99_ms < 100 ? "warn" : "bad";
     setHTML($("kpis"), [
       kpi("Throughput", `${fmtNum(ops)}<small>ops/s</small>`, `${fmtNum(s.load.reads_per_sec)} reads · ${fmtNum(s.load.writes_per_sec)} writes`, "", "rgba(0,212,255,.3)"),
@@ -471,14 +494,14 @@ class App {
       const controls = this.demo
         ? `<div class="node-actions">
             ${down
-              ? `<button class="btn sm ok" data-node="${n.id}" data-act="start">▶ Start</button>`
-              : `<button class="btn sm danger" data-node="${n.id}" data-act="kill">kill -9</button>
-                 <button class="btn sm" data-node="${n.id}" data-act="stop">Graceful stop</button>
-                 <button class="btn sm warn" data-node="${n.id}" data-act="${isolated ? "heal" : "isolate"}">${isolated ? "Heal" : "Partition"}</button>`}
+              ? `<button class="btn sm ok" data-node="${n.id}" data-act="start" data-explain="act-start">▶ Start</button>`
+              : `<button class="btn sm danger" data-node="${n.id}" data-act="kill" data-explain="act-kill">💥 kill -9</button>
+                 <button class="btn sm" data-node="${n.id}" data-act="stop" data-explain="act-stop">Graceful stop</button>
+                 <button class="btn sm warn" data-node="${n.id}" data-act="${isolated ? "heal" : "isolate"}" data-explain="act-${isolated ? "heal" : "isolate"}">${isolated ? "Heal" : "Partition"}</button>`}
            </div>`
         : "";
       setHTML(card, `
-        <div class="node-head"><span class="dot"></span><strong>${esc(n.id)}</strong>${state}</div>
+        <div class="node-head" data-explain="node"><span class="dot"></span><strong>${esc(n.id)}</strong>${state}</div>
         <div class="node-meta">${esc(n.addr.replace(/^https?:\/\//, ""))}${proc && !down ? ` · pid ${proc.pid}` : ""}${n.uptime_seconds && !down ? ` · up ${fmtDur(n.uptime_seconds)}` : ""}</div>
         <div class="node-stats">
           <div><b>${n.shards_led}</b><span>leads</span></div>
@@ -814,11 +837,111 @@ class App {
         if (healing) this.healAlert(text);
       }
       toast(text, act === "kill" ? "bad" : "ok");
+      this.narrateAct(id, act);
       setTimeout(() => this.pollDemo(), 300);
     } catch (e) {
       toast(String(e), "bad");
       this.logs.add("chaos", "error", `action failed: ${act} ${id}: ${e}`);
     }
+  }
+
+  // ---- the newcomer's guide -------------------------------------------------------
+
+  private welcome(): void {
+    if (this.tour.running) this.tour.end();
+    const s = this.snap;
+    openWelcome({
+      sim: this.be.mode === "sim",
+      nodes: s?.spec.members.length ?? 5,
+      shards: s?.spec.shards ?? 24,
+      rf: s?.spec.replication_factor ?? 3,
+      canBreak: !$("control-card").hidden,
+      coach: this.coach,
+      tour: this.tour,
+      breakSomething: () => {
+        $("control-card").scrollIntoView({ block: "center", behavior: "smooth" });
+        const b = document.querySelector<HTMLElement>('[data-scenario="kill-leader"]');
+        b?.classList.add("beckon");
+        setTimeout(() => {
+          b?.classList.remove("beckon");
+          this.scenario("kill-leader");
+        }, 1200);
+      },
+    });
+  }
+
+  /** Plain-language narration, muted while scripted chaos narrates itself. */
+  private narrate(story: Story): void {
+    if (this.gdRunning || this.monkey || this.tour.running) return;
+    this.coach.say(story);
+  }
+
+  private narrateAct(id: string, act: string): void {
+    const s = this.snap;
+    const n = s?.nodes.find((x) => x.id === id);
+    const who = `<b>${esc(id)}</b>`;
+    const shards = s?.spec.shards ?? 0;
+    switch (act) {
+      case "kill": {
+        const led = n?.shards_led ?? 0;
+        this.narrate({
+          icon: "💥",
+          title: `You pulled the plug on ${esc(id)}`,
+          tone: "bad",
+          body: led
+            ? `${who} was the leader (the one in charge) for <b>${led} of the ${shards} shards</b>. Those slices of data are leaderless right now. Watch the <b>Shards</b> map: the surviving copies notice the silence, hold a vote, and elect new leaders in about a second. Clients automatically retry, so almost nobody notices.`
+            : `${who} wasn't leading any shards, only holding backup copies. Nothing needs to be re-elected: the leaders carry on with the copies on the other servers.`,
+        });
+        break;
+      }
+      case "stop":
+        this.narrate({
+          icon: "⏹",
+          title: `You asked ${esc(id)} to shut down politely`,
+          body: `A graceful stop is a planned maintenance reboot. ${who} first hands its leader jobs to other servers, then leaves. Done right, this causes <b>zero failed requests</b>. Press <b>▶ Start</b> on its card to bring it back.`,
+        });
+        break;
+      case "isolate":
+        this.narrate({
+          icon: "✂️",
+          title: `You cut ${esc(id)} off the network`,
+          tone: "bad",
+          body: `${who} is still running but can't reach anyone. The servers that can still talk to each other are the majority, so they elect new leaders and keep going. ${who} can't make any changes on its own (it can't win a vote), which is exactly what stops a split cluster from giving two different answers.`,
+        });
+        break;
+      case "heal":
+        this.narrate({
+          icon: "🔌",
+          title: `${esc(id)} is reconnected`,
+          tone: "ok",
+          body: `${who} catches up on every change it missed from the leaders, then rejoins as a normal copy. Nothing it held was lost, and nothing it missed is skipped.`,
+        });
+        break;
+      case "start":
+        this.narrate({
+          icon: "▶",
+          title: `${esc(id)} is back online`,
+          tone: "ok",
+          body: `${who} reads its saved data from disk, downloads whatever it missed while it was off, and rejoins. Over the next few seconds the cluster hands some leader jobs back to it to spread the work evenly.`,
+        });
+        break;
+    }
+  }
+
+  private narrateResolved(id: number, s: ReturnType<typeof summarize>): void {
+    const facts: string[] = [];
+    if (s.clientFailed !== undefined && s.availability !== undefined) {
+      facts.push(s.clientFailed === 0 ? "<b>not a single request failed</b>" : `<b>${(s.availability * 100).toFixed(2)}%</b> of requests succeeded (${s.clientFailed} retried or failed)`);
+    }
+    if (s.failovers) facts.push(`${s.failovers} shard${s.failovers === 1 ? "" : "s"} elected a new leader (slowest took ${fmtDuration(s.maxFailoverMs)})`);
+    if (s.verifiedOps) facts.push(`${s.verifiedOps.toLocaleString()} answers were proven correct`);
+    this.narrate({
+      icon: "✅",
+      title: `Healed itself in ${fmtDuration(s.durationMs)}`,
+      tone: "ok",
+      body: `Every server and every shard is healthy again${facts.length ? ": " + facts.join(", ") : ""}. No human had to fix anything. That automatic recovery is what the Raft voting method is built for.`,
+      action: { label: "📄 Read the incident report", run: () => this.openReport(id) },
+    });
   }
 
   private healAlert(what: string): void {
@@ -854,10 +977,20 @@ class App {
         this.logAction(`you: 30% packet loss + 5ms delay on ${n.id}`);
         this.tracker.action("chaos", `30% packet loss + 5 ms delay on ${n.id}`, this.demo);
         toast(`30% packet loss on ${n.id}`);
+        this.narrate({
+          icon: "📉",
+          title: `${esc(n.id)} now has terrible Wi-Fi`,
+          body: `30% of its messages vanish and the rest arrive late. The system notices missing messages and simply sends them again, so every answer stays correct. Expect the speed chart to wobble, not the availability.`,
+        });
         break;
       }
       case "rolling": {
         toast("Rolling restart: graceful stop → start, one node at a time");
+        this.narrate({
+          icon: "🔁",
+          title: "Rolling restart: updating every server, one at a time",
+          body: `This is how real companies install updates with no downtime. Each server politely hands off its leader jobs, restarts, catches up and rejoins before the next one goes. Watch <b>Availability</b>: it should stay near 100% the whole way.`,
+        });
         // One incident for the whole procedure, kept open until it finishes.
         this.tracker.action("chaos", "rolling restart (graceful stop → start, one node at a time)", this.demo);
         this.tracker.hold();
@@ -897,6 +1030,12 @@ class App {
         this.tracker.action("heal", "heal everything", this.demo);
         this.healAlert("Heal everything: restarting stopped nodes and clearing network faults");
         toast("Healing all nodes", "ok");
+        this.narrate({
+          icon: "🩹",
+          title: "Healing everything",
+          body: "Stopped servers are restarting and network faults are cleared. Restarted servers download what they missed. The incident closes (with a green alert) once every shard has a leader and every server is healthy.",
+          tone: "ok",
+        });
         break;
       }
     }
@@ -1059,10 +1198,14 @@ class App {
         case "c": case "C": $("consistency-pill").hidden ? toast("No consistency probe in this mode") : $("consistency-pill").click(); break;
         case "/": e.preventDefault(); $("log-search").focus(); $("logs-card").scrollIntoView({ behavior: "smooth", block: "center" }); break;
         case "?": ($("shortcuts-dialog") as HTMLDialogElement).showModal(); break;
+        case "i": case "I": this.welcome(); break;
+        case "t": case "T": this.tour.start(); break;
         default: return;
       }
     });
     $("shortcuts-btn").addEventListener("click", () => ($("shortcuts-dialog") as HTMLDialogElement).showModal());
+    $("guide-btn").addEventListener("click", () => this.welcome());
+    $("banner-guide").addEventListener("click", () => this.welcome());
     const openConsistency = () => {
       this.renderConsistency();
       ($("consistency-dialog") as HTMLDialogElement).showModal();
@@ -1092,6 +1235,14 @@ class App {
       this.alerts.raise({ level: "critical", incidentId: inc.id, heal: !!this.demo?.demo, title: `Incident #${inc.id} opened`, body: `${what} Watching the cluster recover…` });
       this.alerts.setOpenIncidents(1);
       event("incident_open", `Incident #${inc.id} opened: ${inc.trigger}`);
+      if (inc.triggerKind !== "action") {
+        this.narrate({
+          icon: "⚠️",
+          title: "Something broke on its own",
+          body: `The cluster detected a problem nobody here caused: <b>${esc(inc.trigger)}</b>. That's exactly what happens in real data centers. Watch it recover without anyone's help.`,
+          tone: "bad",
+        });
+      }
       this.logs.add("incident", "error", `incident #${inc.id} opened`, [["trigger", inc.trigger], ["kind", inc.triggerKind]]);
     } else if (t.type === "escalated") {
       this.alerts.raise({ level: "warning", incidentId: inc.id, title: `Incident #${inc.id} escalated`, body: capitalize(t.detail) });
@@ -1107,6 +1258,7 @@ class App {
       this.alerts.raise({ level: "resolved", incidentId: inc.id, title: `Incident #${inc.id} resolved in ${fmtDuration(s.durationMs)}`, body: parts.join(" · ") });
       this.alerts.setOpenIncidents(0);
       event("incident_resolved", `Incident #${inc.id} resolved in ${fmtDuration(s.durationMs)}: ${parts.join(", ")}`);
+      this.narrateResolved(inc.id, s);
       this.logs.add("incident", "info", `incident #${inc.id} resolved`, [
         ["duration", fmtDuration(s.durationMs)],
         ["severity", inc.severity],
@@ -1378,6 +1530,11 @@ class App {
     let elapsedEst = 0;
     this.alerts.raise({ level: "info", title: "Game Day started", body: `${ids.length} experiment${ids.length === 1 ? "" : "s"}, about ${Math.max(1, Math.round(total / 60))} min. Each one is verified automatically.` });
     this.logs.add("gameday", "info", "game day started", [["experiments", ids.join(",")]]);
+    this.coach.say({
+      icon: "🎯",
+      title: "Game Day: a fire drill for the cluster",
+      body: `${ids.length} disasters will run back to back: crashed leaders, network cuts, flaky networks, restarts${ids.includes("quorum-loss") ? ", even losing a majority" : ""}. Each has a prediction (like "no request fails") that's checked automatically. You'll get a graded report at the end, about ${Math.max(1, Math.round(total / 60))} min from now.`,
+    });
     this.renderGameDay();
     for (const r of run.results) {
       const e = EXPERIMENTS.find((x) => x.id === r.id)!;
@@ -1459,6 +1616,14 @@ class App {
       body: `${sc.passed} of ${sc.total} hypotheses held · ${sc.pct.toFixed(0)}% of checks passed${run.verifiedOps !== undefined ? ` · ${run.verifiedOps.toLocaleString()} ops verified linearizable` : ""}`,
     });
     this.logs.add("gameday", "info", "game day finished", [["grade", sc.grade], ["passed", `${sc.passed}/${sc.total}`]]);
+    if (!run.cancelled) {
+      this.coach.say({
+        icon: sc.passed === sc.total ? "🏆" : "📋",
+        title: `Game Day finished: grade ${sc.grade}`,
+        body: `${sc.passed} of ${sc.total} predictions held${run.verifiedOps ? `, and ${run.verifiedOps.toLocaleString()} answers were proven correct along the way` : ""}. ${sc.passed === sc.total ? "The cluster survived every disaster thrown at it." : "The report shows exactly which check failed and why."}`,
+        tone: sc.passed === sc.total ? "ok" : "bad",
+      });
+    }
     this.saveGameDay();
     this.renderGameDay();
     if (!run.cancelled) this.openGameDayReport();
@@ -1503,6 +1668,12 @@ class App {
     if (this.monkey) {
       this.alerts.raise({ level: "warning", title: "Chaos Monkey released", body: "A random fault every few seconds (kill, stop, partition or packet loss), healed after a few seconds. Press M or the button to stop it." });
       this.logs.add("monkey", "warn", "chaos monkey on");
+      this.coach.say({
+        icon: "🐒",
+        title: "The Chaos Monkey is loose",
+        body: "Every few seconds it crashes a server, cuts a network cable or ruins the Wi-Fi, then fixes it a little later. Netflix runs a tool like this against its real servers every day. Keep an eye on <b>Availability</b> and the <b>Linearizable</b> tile: they should stay green while the monkey does its worst. Press the button again to catch it.",
+        tone: "bad",
+      });
       this.monkeyLoop();
     } else {
       this.logs.add("monkey", "info", "chaos monkey off");

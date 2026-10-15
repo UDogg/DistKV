@@ -188,6 +188,26 @@ parser and HTTP client).</sub></td>
 </tr>
 </table>
 
+## 🧭 Made for everyone, not just engineers
+
+The dashboard explains itself, so anyone can follow the demo:
+
+<table>
+<tr>
+<td width="55%"><img src="docs/assets/welcome.png" alt="Welcome dialog: a live database that heals itself"></td>
+<td valign="top">
+
+- **A welcome on the first visit**, in four short pages: why systems like this exist, the four ideas behind them (shards, copies, leaders and majority voting), what every "break it" button does in everyday terms, and what to watch. Reopen it with **❓ What is this?** or <kbd>I</kbd>.
+- **A 60-second guided tour** that spotlights each panel in turn (<kbd>T</kbd>).
+- **Plain-English explanations on hover** for every tile, button, badge and panel. Touch screens tap the **?** next to a heading.
+- **A live narrator.** After each fault it says what just happened and what to watch. When the cluster heals, it says how quickly and how many requests were affected.
+
+<img src="docs/assets/coach.png" alt="Narrator: healed itself in 1.6 s" width="420">
+
+</td>
+</tr>
+</table>
+
 ## 🎯 Game Day: chaos experiments with a correctness proof
 
 <table>

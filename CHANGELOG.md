@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased: Game Day, live linearizability checking, incidents
+## Unreleased: Game Day, live linearizability checking, incidents, a guided dashboard
+
+### New: a dashboard anyone can follow
+- **Welcome dialog** on the first visit: what DistKV is and why it matters, how it works in four ideas
+  (shards, replicas, leaders, majority vote), every chaos button explained in everyday terms (`kill -9`
+  is "pull the power plug"), and what to watch. It ends with "Show me around", "Break something!" or
+  "I'll explore". It is remembered per browser; reopen it with **❓ What is this?** or `I`; force it with
+  `?intro`, skip it with `?nointro`.
+- **Guided tour** (`T`): a spotlight walk through the panels. Panels that don't exist in the current
+  mode are skipped.
+- **Plain-language tooltips** on every KPI tile, header badge, chaos button, per-node action and panel
+  heading. They show on hover and on keyboard focus; on touch screens, tap the `?` button.
+- **Live narrator**: after each fault, heal or recovery, a "What just happened" card explains it with
+  the real numbers (shards affected, failover time, failed requests, answers verified), with a link to
+  the incident report. It stays quiet during Game Day and Chaos Monkey, which narrate their own start
+  and end. It can be switched off ("Stop explaining" or the welcome's checkbox).
 
 ### New
 - **Live linearizability checking** (`distkv-demo --probe`, on by default). A probe client records

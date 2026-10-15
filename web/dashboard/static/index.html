@@ -20,17 +20,18 @@
       </div>
     </div>
     <div class="status-strip">
-      <span id="health-pill" class="pill pill-wait">connecting…</span>
-      <span id="conn-pill" class="pill pill-muted">—</span>
-      <span id="mode-pill" class="pill pill-accent" hidden>DEMO</span>
-      <button id="consistency-pill" class="pill pill-muted pill-btn" hidden title="Live linearizability checking: click for details">—</button>
+      <span id="health-pill" class="pill pill-wait" data-explain="pill-health" tabindex="0">connecting…</span>
+      <span id="conn-pill" class="pill pill-muted" data-explain="pill-conn" tabindex="0">—</span>
+      <span id="mode-pill" class="pill pill-accent" data-explain="pill-mode" tabindex="0" hidden>DEMO</span>
+      <button id="consistency-pill" class="pill pill-muted pill-btn" data-explain="pill-consistency" hidden>—</button>
     </div>
     <div class="top-actions">
       <span class="observed" id="observed"></span>
       <div class="bell-wrap">
-        <button class="icon-btn bell" id="alert-bell" title="Alerts" aria-label="Alerts">🔔<span class="bell-count" id="alert-count" hidden>0</span></button>
+        <button class="icon-btn bell" id="alert-bell" data-explain="alerts" aria-label="Alerts">🔔<span class="bell-count" id="alert-count" hidden>0</span></button>
         <div class="alert-panel" id="alert-panel" hidden></div>
       </div>
+      <button class="guide-btn" id="guide-btn" data-explain="guide">❓ <span>What is this?</span></button>
       <button class="icon-btn" id="shortcuts-btn" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">⌨</button>
       <button class="icon-btn" id="theme-toggle" title="Toggle theme">◐</button>
     </div>
@@ -39,6 +40,7 @@
   <div id="sim-banner" class="banner" hidden>
     <strong>Simulation mode.</strong> Everything below is driven by an in-browser model of the cluster.
     Run <code>make demo</code> locally to drive real DistKV processes from this same dashboard.
+    <button class="linkish" id="banner-guide">New here? Start with the 1-minute intro →</button>
   </div>
 
   <div class="alert-stack" id="alert-stack" aria-live="assertive"></div>
@@ -61,43 +63,43 @@
 
     <section class="grid two">
       <article class="card">
-        <header><h2>Throughput</h2><div class="legend" id="tp-legend"></div></header>
+        <header><h2>Throughput <button class="ex-i" type="button" data-explain="chart-throughput" aria-label="What is this?">?</button></h2><div class="legend" id="tp-legend"></div></header>
         <canvas id="chart-throughput" height="220"></canvas>
       </article>
       <article class="card">
-        <header><h2>Latency <small>server-side</small></h2><div class="legend" id="lat-legend"></div></header>
+        <header><h2>Latency <button class="ex-i" type="button" data-explain="chart-latency" aria-label="What is this?">?</button> <small>server-side</small></h2><div class="legend" id="lat-legend"></div></header>
         <canvas id="chart-latency" height="220"></canvas>
       </article>
     </section>
 
     <section class="card" id="control-card" hidden>
       <header>
-        <h2>Chaos lab <small id="chaos-sub">real processes, real failures</small></h2>
+        <h2>Chaos lab <button class="ex-i" type="button" data-explain="chaos" aria-label="What is this?">?</button> <small id="chaos-sub">real processes, real failures</small></h2>
         <div class="scenario-buttons">
-          <button class="btn danger" data-scenario="kill-leader">💥 Kill busiest leader</button>
-          <button class="btn warn" data-scenario="partition">✂️ Partition random node</button>
-          <button class="btn warn" data-scenario="lossy">📉 30% packet loss</button>
-          <button class="btn" data-scenario="rolling">🔁 Rolling restart</button>
-          <button class="btn ok" data-scenario="heal">🩹 Heal everything</button>
+          <button class="btn danger" data-scenario="kill-leader" data-explain="sc-kill-leader">💥 Kill busiest leader</button>
+          <button class="btn warn" data-scenario="partition" data-explain="sc-partition">✂️ Partition random node</button>
+          <button class="btn warn" data-scenario="lossy" data-explain="sc-lossy">📉 30% packet loss</button>
+          <button class="btn" data-scenario="rolling" data-explain="sc-rolling">🔁 Rolling restart</button>
+          <button class="btn ok" data-scenario="heal" data-explain="sc-heal">🩹 Heal everything</button>
         </div>
       </header>
       <p class="chaos-hint muted small">Every fault opens an <b>incident</b>: you get an alert when it starts, another when the cluster has healed, and a report of what happened. Shortcuts: <kbd>K</kbd> kill · <kbd>P</kbd> partition · <kbd>L</kbd> loss · <kbd>H</kbd> heal · <kbd>?</kbd> all.</p>
       <div class="load-controls">
-        <label><span>Generated load <output id="rate-out">0</output> ops/s</span>
+        <label data-explain="load-rate"><span>Generated load <output id="rate-out">0</output> ops/s</span>
           <input type="range" id="rate" min="0" max="6000" step="100"></label>
-        <label><span>Read ratio <output id="ratio-out">80</output>%</span>
+        <label data-explain="load-ratio"><span>Read ratio <output id="ratio-out">80</output>%</span>
           <input type="range" id="ratio" min="0" max="100" step="5"></label>
       </div>
     </section>
 
     <section class="card gameday-card" id="gameday-card" hidden>
       <header>
-        <h2>🎯 Game Day <small>hypothesis-driven chaos experiments with automatic verdicts</small></h2>
+        <h2>🎯 Game Day <button class="ex-i" type="button" data-explain="gameday" aria-label="What is this?">?</button> <small>hypothesis-driven chaos experiments with automatic verdicts</small></h2>
         <div class="card-actions">
           <button class="btn primary" id="gd-run">▶ Run Game Day</button>
           <button class="btn danger" id="gd-cancel" hidden>■ Stop</button>
           <button class="btn" id="gd-report" hidden>📄 Game Day report</button>
-          <button class="btn monkey" id="monkey-btn" aria-pressed="false" title="Random faults every few seconds until you turn it off">🐒 Chaos Monkey: off</button>
+          <button class="btn monkey" id="monkey-btn" aria-pressed="false" data-explain="monkey">🐒 Chaos Monkey: off</button>
         </div>
       </header>
       <div class="gd-progress" id="gd-progress" hidden><i id="gd-bar"></i><span id="gd-step"></span></div>
@@ -106,7 +108,7 @@
 
     <section class="card" id="incidents-card">
       <header>
-        <h2>Incidents &amp; reports <small id="incidents-sub">none yet</small></h2>
+        <h2>Incidents &amp; reports <button class="ex-i" type="button" data-explain="incidents" aria-label="What is this?">?</button> <small id="incidents-sub">none yet</small></h2>
         <div class="card-actions">
           <button class="btn sm" id="incidents-export" title="All incidents with their samples, as JSON">⬇ Export JSON</button>
           <button class="btn sm" id="incidents-clear">Clear</button>
@@ -115,14 +117,14 @@
       <div class="incidents-wrap"><table class="incidents" id="incidents"></table></div>
     </section>
 
-    <section class="card">
-      <header><h2>Nodes</h2><span class="hint">leaders follow the preferred replica via automatic balancing</span></header>
+    <section class="card" id="nodes-card">
+      <header><h2>Servers <small>(nodes)</small> <button class="ex-i" type="button" data-explain="nodes" aria-label="What is this?">?</button></h2><span class="hint">leaders follow the preferred replica via automatic balancing</span></header>
       <div class="nodes" id="nodes"></div>
     </section>
 
     <section class="grid two">
-      <article class="card">
-        <header><h2>Consistent-hash ring</h2><span class="hint" id="ring-hint"></span></header>
+      <article class="card" id="ring-card">
+        <header><h2>Where data lives <small>(consistent-hash ring)</small> <button class="ex-i" type="button" data-explain="ring" aria-label="What is this?">?</button></h2><span class="hint" id="ring-hint"></span></header>
         <div class="ring-wrap">
           <svg id="ring" viewBox="-160 -160 320 320" role="img" aria-label="hash ring"></svg>
           <div class="ring-side">
@@ -134,8 +136,8 @@
           </div>
         </div>
       </article>
-      <article class="card">
-        <header><h2>Key-value playground</h2><span class="hint">requests go through the real API</span></header>
+      <article class="card" id="kv-card">
+        <header><h2>Key-value playground <button class="ex-i" type="button" data-explain="kv" aria-label="What is this?">?</button></h2><span class="hint">requests go through the real API</span></header>
         <form class="kv-form" id="kv-form">
           <input id="kv-key" placeholder="key" value="hello" spellcheck="false">
           <input id="kv-value" placeholder="value" value="world" spellcheck="false">
@@ -150,14 +152,14 @@
       </article>
     </section>
 
-    <section class="card">
-      <header><h2>Shards</h2><span class="hint">★ leader · ● follower (lag in tooltip) · ✕ replica down</span></header>
+    <section class="card" id="shards-card">
+      <header><h2>Shards <small>(slices of the data)</small> <button class="ex-i" type="button" data-explain="shards" aria-label="What is this?">?</button></h2><span class="hint">★ leader · ● follower (lag in tooltip) · ✕ replica down</span></header>
       <div class="matrix-wrap"><table class="matrix" id="matrix"></table></div>
     </section>
 
     <section class="grid two">
       <article class="card">
-        <header><h2>Event timeline <small id="events-hint">derived live from snapshots</small></h2>
+        <header><h2>Event timeline <button class="ex-i" type="button" data-explain="events" aria-label="What is this?">?</button> <small id="events-hint">derived live from snapshots</small></h2>
           <div class="chips" id="event-filters">
             <button class="chip on" data-filter="all">All</button>
             <button class="chip" data-filter="faults">Faults</button>
@@ -170,14 +172,14 @@
         <p class="muted small events-tip">Click an event to locate its shard on the ring.</p>
       </article>
       <article class="card" id="history-card">
-        <header><h2>History <small id="history-badge" class="badge">SQLite</small></h2><span class="hint" id="history-stats"></span></header>
+        <header><h2>History <button class="ex-i" type="button" data-explain="history" aria-label="What is this?">?</button> <small id="history-badge" class="badge">SQLite</small></h2><span class="hint" id="history-stats"></span></header>
         <canvas id="chart-history" height="220"></canvas>
         <p class="muted small" id="history-note">Recorded by the Python historian into SQLite, so it survives page reloads and restarts.</p>
       </article>
     </section>
     <section class="card" id="logs-card">
       <header>
-        <h2>Logs <small id="logs-count">0 lines</small></h2>
+        <h2>Logs <button class="ex-i" type="button" data-explain="logs" aria-label="What is this?">?</button> <small id="logs-count">0 lines</small></h2>
         <div class="log-tools">
           <input id="log-search" type="search" placeholder="Search logs… (/)" spellcheck="false" autocomplete="off">
           <select id="log-source" aria-label="Source"><option value="all">all sources</option></select>
@@ -229,6 +231,8 @@
       <dt><kbd>R</kbd></dt><dd>Open the latest incident report</dd>
       <dt><kbd>A</kbd></dt><dd>Open the alert history</dd>
       <dt><kbd>/</kbd></dt><dd>Search the logs</dd>
+      <dt><kbd>I</kbd></dt><dd>Intro: what is this?</dd>
+      <dt><kbd>T</kbd></dt><dd>Guided tour</dd>
       <dt><kbd>Esc</kbd></dt><dd>Close dialogs</dd>
     </dl>
     <form method="dialog"><button class="btn">Close</button></form>
