@@ -205,6 +205,13 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
+		// A node cut off from its peers (fault injection) only sees itself:
+		// its snapshots would show every other node down and every shard
+		// leaderless. End the stream so the client reconnects elsewhere (the
+		// demo's proxy skips partitioned nodes).
+		if s.cfg.EnableFaultInjection && s.faults.isolated.Load() {
+			return
+		}
 		data, _ := json.Marshal(s.clusterStatus(r.Context()))
 		if _, err := fmt.Fprintf(w, "event: cluster\ndata: %s\n\n", data); err != nil {
 			return

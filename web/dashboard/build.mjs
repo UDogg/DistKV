@@ -13,7 +13,9 @@ const sim = args.includes("--sim");
 const watch = args.includes("--watch");
 
 mkdirSync(out, { recursive: true });
-for (const f of ["styles.css", "favicon.svg"]) cpSync(resolve(here, "static", f), resolve(out, f));
+cpSync(resolve(here, "static/favicon.svg"), resolve(out, "favicon.svg"));
+// Minified CSS (a third smaller); the watch build keeps it readable.
+await esbuild.build({ entryPoints: [resolve(here, "static/styles.css")], outfile: resolve(out, "styles.css"), minify: !watch, logLevel: "warning" });
 let html = readFileSync(resolve(here, "static/index.html"), "utf8");
 if (sim) html = html.replace('<meta name="distkv-mode" content="auto">', '<meta name="distkv-mode" content="sim">');
 writeFileSync(resolve(out, "index.html"), html);

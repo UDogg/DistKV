@@ -3,7 +3,19 @@ updates:
   - { package-ecosystem: github-actions, directory: "/", schedule: { interval: weekly } }
   - { package-ecosystem: gomod, directory: "/", schedule: { interval: weekly } }
   - { package-ecosystem: npm, directory: "/web/dashboard", schedule: { interval: weekly } }
-  - { package-ecosystem: npm, directory: "/clients/typescript", schedule: { interval: weekly } }
+  - package-ecosystem: npm
+    directory: "/clients/typescript"
+    schedule: { interval: weekly }
+    ignore:
+      # The types must describe the oldest supported runtime (engines: node
+      # >=18); newer majors would hide uses of APIs that runtime lacks.
+      - { dependency-name: "@types/node", update-types: ["version-update:semver-major"] }
   - { package-ecosystem: cargo, directory: "/clients/rust", schedule: { interval: weekly } }
-  - { package-ecosystem: pip, directory: "/clients/python", schedule: { interval: weekly } }
+  - package-ecosystem: pip
+    directory: "/clients/python"
+    schedule: { interval: weekly }
+    ignore:
+      # The build floor must stay installable on the oldest supported Python
+      # (requires-python >=3.9); setuptools 83+ needs Python 3.10.
+      - { dependency-name: "setuptools" }
   - { package-ecosystem: docker, directory: "/", schedule: { interval: weekly } }

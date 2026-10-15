@@ -56,6 +56,15 @@ function toast(msg: string, kind: "ok" | "bad" | "info" = "info"): void {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Most panels re-render every second with mostly identical markup; writing
+// innerHTML anyway costs a DOM rebuild, style recalculation and layout.
+const lastHTML = new WeakMap<Element, string>();
+function setHTML(el: Element, html: string): void {
+  if (lastHTML.get(el) === html) return;
+  lastHTML.set(el, html);
+  el.innerHTML = html;
+}
+
 function download(name: string, text: string, type: string): void {
   const url = URL.createObjectURL(new Blob([text], { type }));
   const a = document.createElement("a");
@@ -217,7 +226,13 @@ class App {
     this.be.subscribe((s) => this.onSnapshot(s), (c) => this.onConn(c));
     setInterval(() => this.pollDemo(), 2000);
     setInterval(() => this.pollNodeLogs(), 2000);
-    setInterval(() => this.renderStrip(), 250);
+    setInterval(() => document.hidden || this.renderStrip(), 250);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) return;
+      if (this.stale) this.renderAll();
+      this.pollHistory();
+      this.pollNodeLogs();
+    });
     this.renderIncidents();
     // History needs to know whether a historian is running, so it waits
     // for the first demo-info response.
@@ -269,11 +284,25 @@ class App {
     const tick = this.diff();
     this.tracker.observe(s, this.demo, tick);
     for (const e of tick) this.logs.add("cluster", EVENT_LEVEL[e.kind] ?? "info", e.detail, [], e.ts);
+    if (this.tracker.active && Date.now() - this.lastSave > 10_000) this.saveIncidents();
+    // A background tab keeps tracking (alerts and reports stay right) but
+    // skips the DOM work; it catches up when it becomes visible.
+    if (document.hidden) {
+      this.stale = true;
+      return;
+    }
+    this.renderAll();
+  }
+
+  private stale = false;
+
+  private renderAll(): void {
+    this.stale = false;
+    if (!this.snap) return;
     this.render();
     this.renderIncidents();
     this.renderStrip();
     if (this.reportId !== null && this.tracker.active?.id === this.reportId) this.renderReport();
-    if (this.tracker.active && Date.now() - this.lastSave > 10_000) this.saveIncidents();
   }
 
   /** Derives events by comparing snapshots; returns this tick's events. */
@@ -377,7 +406,7 @@ class App {
     const kpi = (label: string, value: string, sub: string, cls = "", glow = "") =>
       `<div class="kpi ${cls}" style="${glow ? `--glow:${glow}` : ""}"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
     const p99cls = s.load.p99_ms === 0 ? "" : s.load.p99_ms < 10 ? "good" : s.load.p99_ms < 100 ? "warn" : "bad";
-    $("kpis").innerHTML = [
+    setHTML($("kpis"), [
       kpi("Throughput", `${fmtNum(ops)}<small>ops/s</small>`, `${fmtNum(s.load.reads_per_sec)} reads · ${fmtNum(s.load.writes_per_sec)} writes`, "", "rgba(0,212,255,.3)"),
       kpi("p99 latency", fmtMs(s.load.p99_ms), `p50 ${fmtMs(s.load.p50_ms)} · SLO &lt; 10ms`, p99cls, "rgba(255,181,71,.25)"),
       kpi("Availability", `${(avail * 100).toFixed(avail === 1 ? 0 : 3)}%`, availSub, avail >= 0.999 ? "good" : "bad", "rgba(46,229,157,.25)"),
@@ -385,7 +414,7 @@ class App {
       kpi("Nodes", `${up}<small>/ ${s.nodes.length}</small>`, `RF=${s.spec.replication_factor} · tolerates ${Math.floor((s.spec.replication_factor - 1) / 2)} failure`, up === s.nodes.length ? "good" : "warn"),
       kpi("Leader moves", String(this.leaderChanges.length), "last 5 minutes", "", "rgba(255,92,168,.25)"),
       this.consistencyKPI(kpi),
-    ].join("");
+    ].join(""));
   }
 
   private consistencyKPI(kpi: (label: string, value: string, sub: string, cls?: string, glow?: string) => string): string {
@@ -448,7 +477,7 @@ class App {
                  <button class="btn sm warn" data-node="${n.id}" data-act="${isolated ? "heal" : "isolate"}">${isolated ? "Heal" : "Partition"}</button>`}
            </div>`
         : "";
-      card.innerHTML = `
+      setHTML(card, `
         <div class="node-head"><span class="dot"></span><strong>${esc(n.id)}</strong>${state}</div>
         <div class="node-meta">${esc(n.addr.replace(/^https?:\/\//, ""))}${proc && !down ? ` · pid ${proc.pid}` : ""}${n.uptime_seconds && !down ? ` · up ${fmtDur(n.uptime_seconds)}` : ""}</div>
         <div class="node-stats">
@@ -457,7 +486,7 @@ class App {
           <div><b>${l ? fmtMs(l.p99_ms) : "—"}</b><span>p99</span></div>
         </div>
         <div class="leadbar" title="share of shard leaderships"><i style="width:${(n.shards_led / maxLead) * 100}%"></i></div>
-        ${controls}`;
+        ${controls}`);
     }
   }
 
@@ -479,10 +508,11 @@ class App {
   private renderMatrix(s: ClusterStatus): void {
     const nodes = s.spec.members.map((m) => m.id);
     const reach = new Map(s.nodes.map((n) => [n.id, n.reachable && !n.faults?.isolated] as [string, boolean]));
-    let html = `<thead><tr><th>shard</th>${nodes.map((n) => `<th class="node-col" style="--node:${this.color(n)}">${n}</th>`).join("")}<th>term</th><th>commit</th><th>keys</th></tr></thead><tbody>`;
+    const head = `<thead><tr><th>shard</th>${nodes.map((n) => `<th class="node-col" style="--node:${this.color(n)}">${n}</th>`).join("")}<th>term</th><th>commit</th><th>keys</th></tr></thead>`;
+    const rows: string[] = [];
     for (const sh of s.shards) {
       const flash = this.flash.includes(sh.shard) ? ' class="flash"' : "";
-      html += `<tr${flash}><td class="shard">${sh.shard}</td>`;
+      let html = `<tr${flash}><td class="shard">${sh.shard}</td>`;
       for (const n of nodes) {
         const style = `style="--node:${this.color(n)}"`;
         if (!sh.replicas.includes(n)) {
@@ -500,24 +530,56 @@ class App {
       const quorum = Math.floor(sh.replicas.length / 2) + 1;
       const state = sh.leader ? String(sh.term) : liveReplicas < quorum ? `no quorum (${liveReplicas}/${sh.replicas.length})` : "electing";
       html += `<td class="${sh.leader ? "" : "unhealthy"}">${state}</td><td>${sh.commit_index.toLocaleString()}</td><td>${sh.keys.toLocaleString()}</td></tr>`;
+      rows.push(html);
     }
-    $("matrix").innerHTML = html + "</tbody>";
+    // Replace only the rows that changed (usually a few commit counters).
+    const table = $("matrix") as HTMLTableElement;
+    const prev = this.matrixRows;
+    if (head !== this.matrixHead || prev.length !== rows.length || !table.tBodies[0]) {
+      table.innerHTML = head + "<tbody>" + rows.join("") + "</tbody>";
+    } else {
+      const body = table.tBodies[0];
+      rows.forEach((r, i) => {
+        if (r !== prev[i]) body.rows[i].outerHTML = r;
+      });
+    }
+    this.matrixHead = head;
+    this.matrixRows = rows;
   }
+
+  private matrixHead = "";
+  private matrixRows: string[] = [];
+  private shownEvents: Ev[] = [];
+  private shownFilter = "";
 
   private renderEvents(): void {
     const keep = EVENT_FILTERS[this.eventFilter] ?? EVENT_FILTERS.all;
     const list = this.events.filter((e) => keep(e.kind)).slice(0, 150);
-    $("events").innerHTML = list.length
-      ? list
-          .map((e) => {
-            const [icon, cls] = EVENT_STYLE[e.kind] ?? ["•", ""];
-            const sh = /shard (\d+)/.exec(e.detail)?.[1];
-            const inc = /^incident #(\d+)/i.exec(e.detail)?.[1];
-            const data = sh !== undefined ? ` data-shard="${sh}"` : inc !== undefined ? ` data-incident="${inc}"` : "";
-            return `<li class="${cls}${data ? " clickable" : ""}"${data}><time>${new Date(e.ts).toLocaleTimeString([], { hour12: false })}</time><span>${icon}</span><span>${esc(e.detail)}</span></li>`;
-          })
-          .join("")
-      : `<li><time></time><span>✨</span><span class="muted">${this.events.length ? "Nothing matches this filter yet." : "All quiet. Try the chaos buttons."}</span></li>`;
+    const item = (e: Ev, fresh: boolean) => {
+      const [icon, cls] = EVENT_STYLE[e.kind] ?? ["•", ""];
+      const sh = /shard (\d+)/.exec(e.detail)?.[1];
+      const inc = /^incident #(\d+)/i.exec(e.detail)?.[1];
+      const data = sh !== undefined ? ` data-shard="${sh}"` : inc !== undefined ? ` data-incident="${inc}"` : "";
+      return `<li class="${cls}${data ? " clickable" : ""}${fresh ? " new" : ""}"${data}><time>${new Date(e.ts).toLocaleTimeString([], { hour12: false })}</time><span>${icon}</span><span>${esc(e.detail)}</span></li>`;
+    };
+    const ol = $("events");
+    const prev = this.shownEvents;
+    // Usually nothing changed, or new events arrived at the top: insert just
+    // those (and animate only them) instead of rebuilding 150 items.
+    const added = prev.length ? list.indexOf(prev[0]) : -1;
+    const sameTail = added >= 0 && this.shownFilter === this.eventFilter && list.slice(added).every((e, i) => i >= prev.length || e === prev[i]);
+    if (sameTail && list.length) {
+      if (added > 0) {
+        ol.insertAdjacentHTML("afterbegin", list.slice(0, added).map((e) => item(e, true)).join(""));
+        while (ol.children.length > list.length) ol.lastElementChild!.remove();
+      }
+    } else {
+      ol.innerHTML = list.length
+        ? list.map((e) => item(e, false)).join("")
+        : `<li><time></time><span>✨</span><span class="muted">${this.events.length ? "Nothing matches this filter yet." : "All quiet. Try the chaos buttons."}</span></li>`;
+    }
+    this.shownEvents = list;
+    this.shownFilter = this.eventFilter;
   }
 
   /** Highlights a shard on the ring and in the matrix for a few seconds. */
@@ -678,6 +740,7 @@ class App {
   private historyEventsLoaded = false;
 
   private async pollHistory(): Promise<void> {
+    if (document.hidden) return;
     const pts = await this.be.history(15);
     const card = $("history-card");
     if (!pts) {
@@ -1073,7 +1136,7 @@ class App {
     const open = list.filter((i) => i.status === "open").length;
     $("incidents-sub").textContent = list.length ? `${list.length} recorded${open ? " · 1 open" : ""} · click a row for its report` : "none yet: inject a fault to open one";
     if (!list.length) {
-      $("incidents").innerHTML = `<tbody><tr><td class="muted empty">No incidents yet. Use the chaos lab (or press <kbd>K</kbd>) and the report appears here when the cluster heals.</td></tr></tbody>`;
+      setHTML($("incidents"), `<tbody><tr><td class="muted empty">No incidents yet. Use the chaos lab (or press <kbd>K</kbd>) and the report appears here when the cluster heals.</td></tr></tbody>`);
       return;
     }
     const rows = list
@@ -1093,7 +1156,7 @@ class App {
         </tr>`;
       })
       .join("");
-    $("incidents").innerHTML = `<thead><tr><th>#</th><th>status</th><th>sev</th><th>trigger</th><th>started</th><th>duration</th><th>failovers</th><th>failed ops</th><th>availability</th><th></th></tr></thead><tbody>${rows}</tbody>`;
+    setHTML($("incidents"), `<thead><tr><th>#</th><th>status</th><th>sev</th><th>trigger</th><th>started</th><th>duration</th><th>failovers</th><th>failed ops</th><th>availability</th><th></th></tr></thead><tbody>${rows}</tbody>`);
   }
 
   private find(id: number): Incident | undefined {
@@ -1517,7 +1580,7 @@ class App {
   private logNoteShown = false;
 
   private async pollNodeLogs(): Promise<void> {
-    if (this.pollingLogs || !this.snap) return;
+    if (this.pollingLogs || !this.snap || document.hidden) return;
     this.pollingLogs = true;
     try {
       const ids = this.snap.spec.members.map((m) => m.id);

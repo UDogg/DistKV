@@ -15,6 +15,7 @@ import (
 	"github.com/UDogg/DistKV/internal/cluster"
 	"github.com/UDogg/DistKV/internal/kv"
 	"github.com/UDogg/DistKV/internal/raft"
+	"github.com/UDogg/DistKV/internal/transport"
 )
 
 // maxHops bounds server-side forwarding (follower -> leader -> stop).
@@ -83,7 +84,7 @@ func (s *Server) handlePut(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.cfg.MaxValueBytes))
+	body, err := transport.ReadBody(http.MaxBytesReader(w, r.Body, s.cfg.MaxValueBytes), r.ContentLength, s.cfg.MaxValueBytes)
 	if err != nil {
 		var mbe *http.MaxBytesError
 		if errors.As(err, &mbe) {

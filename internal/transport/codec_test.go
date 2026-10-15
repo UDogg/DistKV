@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"reflect"
 	"testing"
 
@@ -60,5 +61,25 @@ func BenchmarkMarshalAppendEntries(b *testing.B) {
 		out, _ := marshal(buf[:0], req)
 		var m raft.AppendEntriesRequest
 		unmarshal(out, &m)
+	}
+}
+
+func TestReadBody(t *testing.T) {
+	data := []byte("hello, raft")
+	for _, tc := range []struct {
+		name   string
+		cl     int64
+		want   string
+		errors bool
+	}{
+		{"declared length", int64(len(data)), "hello, raft", false},
+		{"unknown length", -1, "hello, raft", false},
+		{"declared length above the limit is not trusted", 1 << 40, "hello, raft", false},
+		{"body shorter than declared", int64(len(data)) + 5, "", true},
+	} {
+		got, err := ReadBody(bytes.NewReader(data), tc.cl, 1<<20)
+		if (err != nil) != tc.errors || (err == nil && string(got) != tc.want) {
+			t.Errorf("%s: %q, %v", tc.name, got, err)
+		}
 	}
 }

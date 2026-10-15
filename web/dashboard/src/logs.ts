@@ -157,7 +157,12 @@ export class LogConsole {
   }
 
   private push(e: LogEntry): void {
-    this.entries.push(e);
+    // Keep entries in time order as they arrive (node logs come in a little
+    // late): almost always an append, so rendering never has to sort.
+    let i = this.entries.length;
+    while (i > 0 && this.entries[i - 1].ts > e.ts) i--;
+    if (i === this.entries.length) this.entries.push(e);
+    else this.entries.splice(i, 0, e);
     if (this.entries.length > MAX_ENTRIES) this.entries.splice(0, this.entries.length - MAX_ENTRIES);
     if (!this.sources.has(e.source)) {
       this.sources.add(e.source);
@@ -173,10 +178,8 @@ export class LogConsole {
     const q = this.el.search.value.trim().toLowerCase();
     const src = this.el.source.value;
     const out: LogEntry[] = [];
-    // Node logs and dashboard events interleave by time, not arrival order.
-    const sorted = [...this.entries].sort((a, b) => a.ts - b.ts || a.seq - b.seq);
-    for (let i = sorted.length - 1; i >= 0 && out.length < limit; i--) {
-      const e = sorted[i];
+    for (let i = this.entries.length - 1; i >= 0 && out.length < limit; i--) {
+      const e = this.entries[i];
       if (!this.enabled.has(e.level)) continue;
       if (src && src !== "all" && e.source !== src) continue;
       if (q && !`${e.source} ${e.msg} ${e.attrs.map(([k, v]) => `${k}=${v}`).join(" ")}`.toLowerCase().includes(q)) continue;

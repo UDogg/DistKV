@@ -683,8 +683,10 @@ func (n *Node) syncLoop() {
 		}
 
 		n.mu.Lock()
-		if n.state == Leader && n.term == term && target > n.durableIndex {
-			n.durableIndex = target
+		if n.state == Leader && n.term == term {
+			n.durableIndex = max(n.durableIndex, target)
+			// Always re-evaluate: something else (a compaction) may already
+			// have raised durableIndex past target without committing.
 			n.maybeAdvanceCommit()
 		}
 		n.mu.Unlock()

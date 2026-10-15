@@ -18,7 +18,10 @@ function polar(a: number, r = R): [number, number] {
  * the node currently leading that shard.
  */
 export class RingView {
-  private readonly arcsByShard: SVGPathElement[][] = [];
+  // One path per shard (its arcs as subpaths): 24 elements instead of one
+  // per virtual node (3,072 by default), so recolouring is cheap.
+  private readonly paths: SVGPathElement[] = [];
+  private readonly colors: string[] = [];
   private readonly marker: SVGLineElement;
   private readonly title: SVGTextElement;
   private readonly sub: SVGTextElement;
@@ -33,7 +36,7 @@ export class RingView {
     bg.setAttribute("stroke-width", "26");
     svg.appendChild(bg);
 
-    for (let s = 0; s < topo.shards; s++) this.arcsByShard.push([]);
+    const d: string[][] = Array.from({ length: topo.shards }, () => []);
     const ring = topo.ring;
     for (let i = 0; i < ring.length; i++) {
       const prev = ring[(i - 1 + ring.length) % ring.length];
@@ -43,20 +46,31 @@ export class RingView {
       const [x0, y0] = polar(a0);
       const [x1, y1] = polar(a1);
       const large = a1 - a0 > Math.PI ? 1 : 0;
+      d[ring[i].shard].push(`M${x0.toFixed(2)},${y0.toFixed(2)}A${R},${R} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)}`);
+    }
+    for (let shard = 0; shard < topo.shards; shard++) {
       const p = document.createElementNS(SVG, "path");
-      p.setAttribute("d", `M${x0.toFixed(2)},${y0.toFixed(2)} A${R},${R} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)}`);
+      p.setAttribute("d", d[shard].join(""));
       p.setAttribute("fill", "none");
       p.setAttribute("stroke-width", "22");
       p.setAttribute("stroke", "#444");
-      const shard = ring[i].shard;
-      p.addEventListener("mouseenter", () => onHover(shard));
-      p.addEventListener("mouseleave", () => onHover(null));
+      p.dataset.shard = String(shard);
       const t = document.createElementNS(SVG, "title");
       t.textContent = `shard ${shard}`;
       p.appendChild(t);
-      this.arcsByShard[shard].push(p);
+      this.paths.push(p);
+      this.colors.push("");
       svg.appendChild(p);
     }
+    // One delegated listener pair for the whole ring.
+    svg.addEventListener("pointerover", (e) => {
+      const s = (e.target as Element).closest?.("path[data-shard]") as SVGPathElement | null;
+      if (s) onHover(Number(s.dataset.shard));
+    });
+    svg.addEventListener("pointerout", (e) => {
+      const to = (e.relatedTarget as Element | null)?.closest?.("path[data-shard]");
+      if (!to) onHover(null);
+    });
 
     this.marker = document.createElementNS(SVG, "line");
     this.marker.classList.add("marker");
@@ -77,18 +91,20 @@ export class RingView {
   }
 
   setCenter(title: string, sub: string): void {
-    this.title.textContent = title;
-    this.sub.textContent = sub;
+    if (this.title.textContent !== title) this.title.textContent = title;
+    if (this.sub.textContent !== sub) this.sub.textContent = sub;
   }
 
-  /** Colour each shard's arcs by its leader's colour (grey = no leader). */
+  /** Colour each shard's arcs by its leader's colour (dashed red = no leader). */
   update(leaders: (string | undefined)[], color: (node: string) => string): void {
     leaders.forEach((leader, shard) => {
+      const p = this.paths[shard];
       const c = leader ? color(leader) : "#ff5c7a";
-      for (const p of this.arcsByShard[shard] ?? []) {
-        if (p.getAttribute("stroke") !== c) p.setAttribute("stroke", c);
-        p.setAttribute("stroke-dasharray", leader ? "" : "2 3");
-      }
+      if (!p || this.colors[shard] === c) return;
+      this.colors[shard] = c;
+      p.setAttribute("stroke", c);
+      if (leader) p.removeAttribute("stroke-dasharray");
+      else p.setAttribute("stroke-dasharray", "2 3");
     });
   }
 
@@ -96,7 +112,7 @@ export class RingView {
   highlight(shard: number | null): void {
     if (shard === this.highlighted) return;
     this.highlighted = shard;
-    this.arcsByShard.forEach((arcs, s) => arcs.forEach((p) => p.classList.toggle("dim", shard !== null && s !== shard)));
+    this.paths.forEach((p, s) => p.classList.toggle("dim", shard !== null && s !== shard));
   }
 
   /** Point at the ring position of a key. Returns its shard. */

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -93,7 +94,25 @@ func TestFaultInjectionIsolatesNode(t *testing.T) {
 			t.Fatalf("faults: %d", resp.StatusCode)
 		}
 	}
+	// An isolated node only sees itself, so it stops serving the event
+	// stream (clients reconnect to a node with a real view).
+	stream, err := http.Get(ep + "/v1/events?interval=250ms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended := make(chan struct{})
+	go func() {
+		io.Copy(io.Discard, stream.Body)
+		stream.Body.Close()
+		close(ended)
+	}()
+
 	post(api.Faults{Isolated: true})
+	select {
+	case <-ended:
+	case <-time.After(3 * time.Second):
+		t.Fatal("an isolated node kept streaming its one-node view")
+	}
 
 	// Every shard must end up led by one of the two connected nodes.
 	deadline := time.Now().Add(10 * time.Second)

@@ -32,7 +32,30 @@
 - Keyboard shortcuts: `K` kill, `P` partition, `L` packet loss, `H` heal, `R` latest report, `A` alerts,
   `/` search logs, `?` help.
 
+### Performance
+- Dashboard steady-state main-thread time down ~60% (69 → 28 ms/s in Chromium), live DOM down from
+  ~7,600 to ~1,600 elements and event listeners from ~6,200 to 63. The hash ring is one SVG path per
+  shard instead of one per virtual node. Panels skip unchanged re-renders, the shard matrix updates only
+  changed rows, the timeline inserts only new events, and the log console keeps entries sorted on
+  insert. Always-on decorative animations are gone and `prefers-reduced-motion` is respected.
+  Background tabs keep tracking incidents but skip rendering and polling.
+- Dashboard assets are served gzipped (compressed once in memory: 155 KB → 48 KB on the wire) with
+  ETags, so reloads are 304s. CSS is minified.
+- Bodies with a known `Content-Length` (Raft RPCs, KV PUTs, client responses) are read into one
+  exact-size allocation instead of `io.ReadAll`'s doubling.
+- Measured and *not* adopted: multiplexing Raft RPCs per peer (with aligned heartbeats) halved
+  internal HTTP requests but did not reduce idle CPU, and saved only ~5% at moderate load. Idle cost is
+  dominated by per-group heartbeat wake-ups, not HTTP. It wasn't worth a new wire protocol.
+
 ### Fixed
+- **Raft: a proposal could hang forever on a single-node group** (and stall up to a heartbeat on larger
+  ones). When a snapshot's compaction made the log durable while the leader's sync loop was syncing,
+  the sync loop found nothing left to do and skipped advancing the commit index, and compaction didn't
+  advance it either. Found as an intermittent CI hang in `TestNodeRecoversFromFileStorage`;
+  reproduced deterministically by a new test.
+- An isolated node (fault injection) kept serving `/v1/events` with its one-node view (every shard
+  leaderless), so a dashboard observing through it reported a cluster-wide outage. It now ends the
+  stream and clients reconnect to a node with a real view.
 - Demo supervisor: a start issued right after a kill or graceful stop could be a no-op (the stop
   changed the node's state asynchronously), or could start a second process while the first was
   still shutting down. Stops now change state immediately and starts wait for the old process.

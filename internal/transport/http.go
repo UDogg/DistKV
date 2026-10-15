@@ -149,7 +149,7 @@ func (t *HTTP) call(ctx context.Context, to raft.NodeID, shard, rpc string, req,
 		io.Copy(io.Discard, hresp.Body)
 		return fmt.Errorf("transport: %s %s/%s: %s: %s", to, shard, rpc, hresp.Status, bytes.TrimSpace(msg))
 	}
-	data, err := io.ReadAll(hresp.Body)
+	data, err := ReadBody(hresp.Body, hresp.ContentLength, 64<<20)
 	if err != nil {
 		return err
 	}
@@ -198,7 +198,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// The body is read into a fresh buffer: decoded entries alias it and
 	// are retained by the Raft log.
-	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.MaxBodyBytes))
+	data, err := ReadBody(http.MaxBytesReader(w, r.Body, h.MaxBodyBytes), r.ContentLength, h.MaxBodyBytes)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -250,3 +250,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // Pattern is the ServeMux pattern the Handler expects to be mounted at.
 const Pattern = "POST " + PathPrefix + "{shard}/{rpc}"
+
+// ReadBody reads a request or response body. When the length is declared
+// (contentLength >= 0) it allocates exactly that much once, instead of
+// io.ReadAll's repeated doubling and copying. r should already enforce any
+// size limit (e.g. an http.MaxBytesReader); contentLength above limit is
+// not trusted for the allocation.
+func ReadBody(r io.Reader, contentLength, limit int64) ([]byte, error) {
+	if contentLength < 0 || contentLength > limit {
+		return io.ReadAll(r)
+	}
+	buf := make([]byte, contentLength)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
