@@ -83,7 +83,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: distkv
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -91,7 +91,7 @@ jobs:
           build-args: VERSION=${{ github.ref_name }}
           tags: ghcr.io/udogg/distkv:${{ github.ref_name }},ghcr.io/udogg/distkv:latest
       - name: historian
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: clients/python
           platforms: linux/amd64,linux/arm64
