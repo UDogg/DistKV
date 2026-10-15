@@ -8,6 +8,7 @@ import type {
   HistorianStats,
   HistoryPoint,
   KVResult,
+  LogChunk,
 } from "./types";
 
 /**
@@ -27,18 +28,33 @@ export class LiveBackend implements Backend {
   constructor(private readonly base: string = "", private readonly historianUrl: string | null = null) {}
 
   subscribe(onSnapshot: (s: ClusterStatus) => void, onConn: (c: ConnState) => void): void {
-    const es = new EventSource(`${this.base}/v1/events?interval=1s`);
-    es.addEventListener("cluster", (ev) => {
-      onConn("live");
-      onSnapshot(JSON.parse((ev as MessageEvent).data));
-    });
-    es.onerror = () => onConn("reconnecting"); // EventSource reconnects by itself
+    const connect = () => {
+      const es = new EventSource(`${this.base}/v1/events?interval=1s`);
+      es.addEventListener("cluster", (ev) => {
+        onConn("live");
+        onSnapshot(JSON.parse((ev as MessageEvent).data));
+      });
+      es.onerror = () => {
+        onConn("reconnecting");
+        // EventSource retries dropped streams by itself, but gives up for
+        // good on an error status (e.g. 503 from a partitioned node, or 502
+        // from a proxy): retry those ourselves.
+        if (es.readyState === EventSource.CLOSED) setTimeout(connect, 1000);
+      };
+    };
+    connect();
   }
 
   async demoInfo(): Promise<DemoInfo | null> {
     try {
       const r = await fetch(`${this.base}/demo/info`, { cache: "no-store" });
       this.demo = r.ok ? await r.json() : null;
+      // Older supervisors encoded empty lists as null.
+      const c = this.demo?.consistency;
+      if (c) {
+        c.violations ??= [];
+        c.recent ??= [];
+      }
     } catch {
       this.demo = null;
     }
@@ -88,6 +104,17 @@ export class LiveBackend implements Backend {
 
   async historianStats(): Promise<HistorianStats | null> {
     return this.historian(`/stats`);
+  }
+
+  async nodeLogs(id: string, offset: number): Promise<LogChunk | null> {
+    // Only the demo supervisor knows where node logs are.
+    if (!this.demo?.demo) return null;
+    try {
+      const r = await fetch(`${this.base}/demo/nodes/${encodeURIComponent(id)}/logs?offset=${offset}`, { cache: "no-store" });
+      return r.ok ? ((await r.json()) as LogChunk) : null;
+    } catch {
+      return null;
+    }
   }
 
   private async historian<T>(path: string): Promise<T | null> {

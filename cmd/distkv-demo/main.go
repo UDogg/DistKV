@@ -55,6 +55,7 @@ type config struct {
 	pythonPath        string
 	distkvBin         string
 	electionTimeout   time.Duration
+	probe             bool
 }
 
 func main() {
@@ -72,6 +73,7 @@ func main() {
 	flag.StringVar(&cfg.pythonPath, "python-path", "clients/python", "path to the DistKV Python package")
 	flag.StringVar(&cfg.distkvBin, "distkv", "", "path to the distkv binary (default: next to this binary)")
 	flag.DurationVar(&cfg.electionTimeout, "election-timeout", 300*time.Millisecond, "Raft election timeout for demo nodes")
+	flag.BoolVar(&cfg.probe, "probe", true, "continuously verify linearizability with a recorded workload (Jepsen-style)")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -117,6 +119,7 @@ type supervisor struct {
 	rate      atomic.Int64
 	readRatio atomic.Uint64 // float64 bits
 	historian string        // base URL, if running
+	probe     *probe        // consistency probe, if enabled
 	clientStats
 }
 
@@ -246,6 +249,11 @@ func run(cfg config, logger *slog.Logger) error {
 		sv.shutdown()
 		return err
 	}
+	if cfg.probe {
+		if err := sv.startProbe(ctx); err != nil {
+			logger.Warn("consistency probe disabled", "err", err)
+		}
+	}
 	srv := &http.Server{Handler: sv.routes()}
 	go srv.Serve(ln)
 	go sv.generateLoad(ctx)
@@ -284,10 +292,26 @@ func (sv *supervisor) setReadRatio(v float64) {
 func (sv *supervisor) getReadRatio() float64 { return float64(sv.readRatio.Load()) / 1e6 }
 
 func (sv *supervisor) start(n *node) error {
+	// The previous process may still be exiting (a graceful stop hands its
+	// leaderships off first). Starting now would race it for the port and
+	// the data directory.
+	sv.mu.Lock()
+	prev, running := n.exited, n.State == stateRunning
+	sv.mu.Unlock()
+	if running {
+		return nil
+	}
+	if prev != nil {
+		select {
+		case <-prev:
+		case <-time.After(20 * time.Second):
+			return fmt.Errorf("%s: the previous process has not exited", n.ID)
+		}
+	}
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	if n.State == stateRunning {
-		return nil
+		return nil // started concurrently
 	}
 	dir := filepath.Join(sv.cfg.dir, n.ID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -315,25 +339,35 @@ func (sv *supervisor) start(n *node) error {
 	n.cmd, n.PID, n.State, n.Since, n.logFile = cmd, cmd.Process.Pid, stateRunning, time.Now(), logFile
 	n.Starts++
 	n.exited = make(chan struct{})
-	go func(n *node, cmd *exec.Cmd, done chan struct{}) {
+	go func(n *node, cmd *exec.Cmd, logFile *os.File, done chan struct{}) {
 		cmd.Wait()
 		sv.mu.Lock()
 		if n.cmd == cmd && n.State == stateRunning {
 			n.State, n.Since = stateExited, time.Now()
 		}
-		n.logFile.Close()
+		logFile.Close() // this process's log, not a successor's
 		sv.mu.Unlock()
 		close(done)
-	}(n, cmd, n.exited)
+	}(n, cmd, logFile, n.exited)
 	sv.logger.Info("node started", "node", n.ID, "pid", n.PID)
 	return nil
 }
 
 func (sv *supervisor) stop(n *node, sig syscall.Signal) {
+	if wait := sv.signalStop(n, sig); wait != nil {
+		wait()
+	}
+}
+
+// signalStop marks the node stopped and signals the process, so that a
+// start issued right afterwards sees the new state (and waits for the exit).
+// The returned function waits for the process to exit; it is nil if the node
+// wasn't running.
+func (sv *supervisor) signalStop(n *node, sig syscall.Signal) func() {
 	sv.mu.Lock()
 	if n.State != stateRunning {
 		sv.mu.Unlock()
-		return
+		return nil
 	}
 	cmd, done := n.cmd, n.exited
 	if sig == syscall.SIGKILL {
@@ -344,13 +378,15 @@ func (sv *supervisor) stop(n *node, sig syscall.Signal) {
 	n.Since = time.Now()
 	sv.mu.Unlock()
 	cmd.Process.Signal(sig)
-	select {
-	case <-done:
-	case <-time.After(15 * time.Second):
-		cmd.Process.Kill()
-		<-done
+	return func() {
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			cmd.Process.Kill()
+			<-done
+		}
+		sv.logger.Info("node stopped", "node", n.ID, "signal", sig.String())
 	}
-	sv.logger.Info("node stopped", "node", n.ID, "signal", sig.String())
 }
 
 func (sv *supervisor) shutdown() {
@@ -509,6 +545,23 @@ func (sv *supervisor) generateLoad(ctx context.Context) {
 	}
 }
 
+// startProbe starts the consistency probe on its own client (its own
+// sessions), at a rate small enough not to disturb the demo's numbers.
+func (sv *supervisor) startProbe(ctx context.Context) error {
+	var eps []string
+	for _, n := range sv.nodes {
+		eps = append(eps, n.Addr)
+	}
+	c, err := client.New(ctx, client.Config{Endpoints: eps, Timeout: 3 * time.Second})
+	if err != nil {
+		return err
+	}
+	sv.probe = newProbe(c, probeOptions{keys: 6, workers: 4, rate: 120, epoch: 2 * time.Second, opTimeout: 3 * time.Second}, sv.logger)
+	go sv.probe.runProbe(ctx)
+	sv.logger.Info("consistency probe started", "keys", 6, "workers", 4, "rate", 120)
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // HTTP: dashboard, control API, proxy to the cluster
 
@@ -520,6 +573,8 @@ type demoInfo struct {
 	Historian bool         `json:"historian"`
 	Shards    int          `json:"shards"`
 	Client    ClientReport `json:"client"`
+	// Consistency is the probe's live linearizability verdict.
+	Consistency *ConsistencyReport `json:"consistency,omitempty"`
 }
 
 func (sv *supervisor) routes() http.Handler {
@@ -534,8 +589,13 @@ func (sv *supervisor) routes() http.Handler {
 		}
 		sv.mu.Unlock()
 		sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
-		writeJSON(w, demoInfo{Demo: true, Nodes: nodes, Rate: sv.rate.Load(), ReadRatio: sv.getReadRatio(),
-			Historian: sv.historian != "", Shards: sv.cfg.shards, Client: sv.clientStats.report()})
+		info := demoInfo{Demo: true, Nodes: nodes, Rate: sv.rate.Load(), ReadRatio: sv.getReadRatio(),
+			Historian: sv.historian != "", Shards: sv.cfg.shards, Client: sv.clientStats.report()}
+		if sv.probe != nil {
+			r := sv.probe.report()
+			info.Consistency = &r
+		}
+		writeJSON(w, info)
 	})
 	mux.HandleFunc("POST /demo/nodes/{id}/{action}", func(w http.ResponseWriter, r *http.Request) {
 		n := sv.find(r.PathValue("id"))
@@ -544,10 +604,15 @@ func (sv *supervisor) routes() http.Handler {
 			return
 		}
 		switch action := r.PathValue("action"); action {
-		case "kill":
-			go sv.stop(n, syscall.SIGKILL)
-		case "stop":
-			go sv.stop(n, syscall.SIGTERM)
+		case "kill", "stop":
+			sig := syscall.SIGKILL
+			if action == "stop" {
+				sig = syscall.SIGTERM
+			}
+			// The state changes now; the exit is awaited in the background.
+			if wait := sv.signalStop(n, sig); wait != nil {
+				go wait()
+			}
 		case "start":
 			if err := sv.start(n); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -569,6 +634,25 @@ func (sv *supervisor) routes() http.Handler {
 			return
 		}
 		writeJSON(w, map[string]string{"node": n.ID, "status": "ok"})
+	})
+	// Incremental node logs for the dashboard's log console: pass back the
+	// returned offset to receive only new lines (-1 = the last few lines).
+	mux.HandleFunc("GET /demo/nodes/{id}/logs", func(w http.ResponseWriter, r *http.Request) {
+		n := sv.find(r.PathValue("id"))
+		if n == nil {
+			http.Error(w, "unknown node", http.StatusNotFound)
+			return
+		}
+		off, err := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
+		if err != nil {
+			off = -1
+		}
+		lines, next, err := readLog(filepath.Join(sv.cfg.dir, n.ID, "node.log"), off, 16<<10, 256<<10)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"node": n.ID, "offset": next, "lines": lines})
 	})
 	mux.HandleFunc("POST /demo/load", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -663,4 +747,56 @@ func writeJSONStatus(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// readLog returns the complete lines of the file at path that start at byte
+// offset off, and the offset to continue from. A negative offset, or one past
+// the end (the file was recreated), returns the last tail bytes instead. At
+// most limit bytes are read per call.
+func readLog(path string, off, tail, limit int64) ([]string, int64, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, 0, nil
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, 0, err
+	}
+	size := st.Size()
+	start, partial := off, false
+	if off < 0 || off > size {
+		start = max(0, size-tail)
+		partial = start > 0
+	}
+	buf := make([]byte, min(limit, size-start))
+	n, err := f.ReadAt(buf, start)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, 0, err
+	}
+	buf = buf[:n]
+	end := strings.LastIndexByte(string(buf), '\n') + 1
+	if end == 0 && int64(n) == limit {
+		end = n // a single line longer than limit: deliver it in pieces
+	}
+	next := start + int64(end)
+	text := string(buf[:end])
+	if partial {
+		// Started mid-line: drop the fragment. With no line start in the
+		// window at all, stay in tail mode rather than hand out an offset
+		// in the middle of a line.
+		i := strings.IndexByte(text, '\n')
+		if i < 0 {
+			return []string{}, -1, nil
+		}
+		text = text[i+1:]
+	}
+	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+	if text == "" {
+		lines = []string{}
+	}
+	return lines, next, nil
 }

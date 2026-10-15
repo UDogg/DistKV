@@ -78,7 +78,8 @@ writes, and the wire codec is fuzzed.
 
 ### 📊 Live dashboard and chaos lab
 A TypeScript dashboard embedded in every binary: live charts over SSE, a hash-ring visualisation,
-a shard matrix, an incident timeline, and buttons for `kill -9`, **network partitions** and **packet loss**.
+a shard matrix, and buttons for `kill -9`, **network partitions** and **packet loss**. Every fault opens an
+**incident** with **alerts**, a downloadable **post-incident report** and a searchable **log console**.
 
 </td>
 <td valign="top">
@@ -139,6 +140,41 @@ unreachable, then each shard's leader moving within the same second.
 </tr>
 </table>
 
+## 🚨 Incidents, alerts and reports
+
+<table>
+<tr>
+<td width="60%"><img src="docs/assets/incident.png" alt="An incident open after kill -9, with its alert and live recovery strip"></td>
+<td width="40%" valign="top">
+
+**Break something and the dashboard runs the incident for you:**
+
+- 🚨 **an alert when it starts**: what was injected (or detected) and what broke
+- 📶 **a live strip** with elapsed time, severity and recovery progress
+- ⚠️ **escalations** if it gets worse: another node, or a shard losing quorum
+- ✅ **an alert when it heals**, with time to recover, failed client operations and failovers
+
+Alerts can also beep and send desktop notifications (🔔 menu). It works for faults injected from
+the terminal too: the dashboard detects them from the cluster's own state.
+
+</td>
+</tr>
+<tr>
+<td><img src="docs/assets/report.png" alt="A generated incident report"></td>
+<td valign="top">
+
+**Each incident produces a report**: summary, SLO findings, impact, per-shard failover times,
+metric charts of the incident window, a timeline and recommendations. Download it as
+**HTML** or **Markdown**, copy it into an issue, or print it to **PDF**.
+
+**The log console** merges cluster events, chaos actions, alerts and client stats with each
+node's **own server log** (streamed by the demo supervisor), with level filters, search and
+`.log`/`.jsonl` export. Keyboard: <kbd>K</kbd> kill · <kbd>P</kbd> partition · <kbd>H</kbd> heal · <kbd>R</kbd> report · <kbd>?</kbd> help.
+
+</td>
+</tr>
+</table>
+
 <table>
 <tr>
 <td width="45%"><img src="docs/assets/ring.png" alt="Consistent-hash ring with key finder"></td>
@@ -149,6 +185,56 @@ unreachable, then each shard's leader moving within the same second.
 browser hashes it with the same FNV-1a + SplitMix64 code as the servers.</sub></td>
 <td align="center"><sub><b><code>distkv-top</code></b>: an htop for the cluster in standard-library-only Rust (its own JSON
 parser and HTTP client).</sub></td>
+</tr>
+</table>
+
+## 🎯 Game Day: chaos experiments with a correctness proof
+
+<table>
+<tr>
+<td width="55%"><img src="docs/assets/gameday.png" alt="Game Day experiments with automatic verdicts"></td>
+<td width="45%" valign="top">
+
+**Five experiments, each a falsifiable hypothesis**, run end to end at the press of a button:
+wait for a steady state → inject the fault → observe → heal → wait for recovery → **verify**.
+
+| | Hypothesis |
+|---|---|
+| 💥 | Losing the busiest leader costs clients nothing; failover < 2 s |
+| ✂️ | A partitioned leader steps down; no stale reads |
+| 📉 | 30% packet loss on two nodes is absorbed by retries |
+| 🔁 | A rolling restart causes zero failovers and zero errors |
+| 🛑 | With a shard's majority down, DistKV **refuses writes rather than diverge** (CP) |
+
+On a real 5-node `make demo`: **5 of 5 hypotheses held, grade A+**, with **10,450 operations verified
+linearizable** during the run. Plus **🐒 Chaos Monkey**: random faults until you switch it off.
+
+</td>
+</tr>
+<tr>
+<td><img src="docs/assets/consistency.png" alt="Live linearizability checking"></td>
+<td valign="top">
+
+**Live linearizability checking, Jepsen style.** While you break things, a probe client reads, writes and
+deletes a few keys and records every operation's invocation and response time. Every 2 s a solo
+*barrier read* per key pins its state and closes an **epoch**, whose history is verified with the
+**Wing & Gong** checker (Lowe's memoisation, as in Porcupine). Writes whose outcome the client never
+learned are carried forward as "may take effect later".
+
+The **✓ LINEARIZABLE** pill and tile are live verdicts, and every incident report says how many
+operations were verified across it. Hatched bars are keys whose shard had no leader: their epoch
+can't close until a majority is back.
+
+</td>
+</tr>
+<tr>
+<td><img src="docs/assets/gameday-report.png" alt="Game Day report"></td>
+<td valign="top">
+
+**The Game Day report** scores the run (A+ to F), shows each hypothesis with its checks, and links
+every incident report. Download it as HTML or Markdown, or print it to PDF.
+
+</td>
 </tr>
 </table>
 

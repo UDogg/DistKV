@@ -379,7 +379,7 @@ func (c *Client) do(ctx context.Context, method, key string, q url.Values, body 
 			}
 			continue
 		}
-		data, err := io.ReadAll(hresp.Body)
+		data, err := transport.ReadBody(hresp.Body, hresp.ContentLength, 64<<20)
 		hresp.Body.Close()
 		if err != nil {
 			lastErr = err

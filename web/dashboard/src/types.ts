@@ -76,6 +76,49 @@ export interface DemoInfo {
   historian: boolean;
   shards: number;
   client?: ClientReport;
+  /** Live linearizability verdict from the demo's consistency probe. */
+  consistency?: ConsistencyReport;
+}
+
+export interface EpochView {
+  key: string;
+  start: number;
+  end: number;
+  ops: number;
+  ok: boolean;
+}
+
+export interface OpView {
+  client: number;
+  kind: "get" | "put" | "delete";
+  value?: string;
+  found: boolean;
+  unknown?: boolean;
+  call: number;
+  return?: number;
+}
+
+export interface Violation {
+  time: number;
+  key: string;
+  ops: OpView[];
+  error: string;
+}
+
+/** Jepsen-style continuous linearizability checking (cmd/distkv-demo/probe.go). */
+export interface ConsistencyReport {
+  enabled: boolean;
+  verdict: "pending" | "linearizable" | "violation";
+  ops_checked: number;
+  ops_pending: number;
+  epochs: number;
+  indeterminate: number;
+  inconclusive: number;
+  keys: number;
+  last_check: number;
+  violations: Violation[];
+  violations_total: number;
+  recent: EpochView[];
 }
 
 /** What the demo's traffic generator (a real retrying client) experienced. */
@@ -126,6 +169,12 @@ export interface HistorianStats {
   first_ts?: number;
 }
 
+/** New lines of a node's log, and the offset to continue from. */
+export interface LogChunk {
+  offset: number;
+  lines: string[];
+}
+
 export type ConnState = "live" | "reconnecting" | "sim";
 
 /** Everything the UI needs from a cluster, live or simulated. */
@@ -140,4 +189,6 @@ export interface Backend {
   history(minutes: number): Promise<HistoryPoint[] | null>;
   historianEvents(): Promise<HistorianEvent[] | null>;
   historianStats(): Promise<HistorianStats | null>;
+  /** Node log lines after offset (-1 = recent tail); null when unavailable. */
+  nodeLogs(id: string, offset: number): Promise<LogChunk | null>;
 }

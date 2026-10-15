@@ -23,9 +23,15 @@
       <span id="health-pill" class="pill pill-wait">connecting…</span>
       <span id="conn-pill" class="pill pill-muted">—</span>
       <span id="mode-pill" class="pill pill-accent" hidden>DEMO</span>
+      <button id="consistency-pill" class="pill pill-muted pill-btn" hidden title="Live linearizability checking: click for details">—</button>
     </div>
     <div class="top-actions">
       <span class="observed" id="observed"></span>
+      <div class="bell-wrap">
+        <button class="icon-btn bell" id="alert-bell" title="Alerts" aria-label="Alerts">🔔<span class="bell-count" id="alert-count" hidden>0</span></button>
+        <div class="alert-panel" id="alert-panel" hidden></div>
+      </div>
+      <button class="icon-btn" id="shortcuts-btn" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">⌨</button>
       <button class="icon-btn" id="theme-toggle" title="Toggle theme">◐</button>
     </div>
   </header>
@@ -35,7 +41,22 @@
     Run <code>make demo</code> locally to drive real DistKV processes from this same dashboard.
   </div>
 
+  <div class="alert-stack" id="alert-stack" aria-live="assertive"></div>
+
   <main>
+    <section class="incident-strip" id="incident-strip" hidden>
+      <div class="strip-pulse" aria-hidden="true"></div>
+      <div class="strip-main">
+        <div class="strip-title"><b id="strip-title">Incident</b> <span class="sev" id="strip-sev">SEV3</span> <span class="strip-elapsed" id="strip-elapsed">0.0s</span></div>
+        <div class="strip-detail" id="strip-detail"></div>
+        <div class="strip-progress"><i id="strip-progress"></i><span id="strip-progress-label"></span></div>
+      </div>
+      <div class="strip-actions">
+        <button class="btn ok" data-scenario="heal">🩹 Heal everything</button>
+        <button class="btn" id="strip-report">📄 Live report</button>
+      </div>
+    </section>
+
     <section class="kpis" id="kpis"></section>
 
     <section class="grid two">
@@ -60,12 +81,38 @@
           <button class="btn ok" data-scenario="heal">🩹 Heal everything</button>
         </div>
       </header>
+      <p class="chaos-hint muted small">Every fault opens an <b>incident</b>: you get an alert when it starts, another when the cluster has healed, and a report of what happened. Shortcuts: <kbd>K</kbd> kill · <kbd>P</kbd> partition · <kbd>L</kbd> loss · <kbd>H</kbd> heal · <kbd>?</kbd> all.</p>
       <div class="load-controls">
         <label><span>Generated load <output id="rate-out">0</output> ops/s</span>
           <input type="range" id="rate" min="0" max="6000" step="100"></label>
         <label><span>Read ratio <output id="ratio-out">80</output>%</span>
           <input type="range" id="ratio" min="0" max="100" step="5"></label>
       </div>
+    </section>
+
+    <section class="card gameday-card" id="gameday-card" hidden>
+      <header>
+        <h2>🎯 Game Day <small>hypothesis-driven chaos experiments with automatic verdicts</small></h2>
+        <div class="card-actions">
+          <button class="btn primary" id="gd-run">▶ Run Game Day</button>
+          <button class="btn danger" id="gd-cancel" hidden>■ Stop</button>
+          <button class="btn" id="gd-report" hidden>📄 Game Day report</button>
+          <button class="btn monkey" id="monkey-btn" aria-pressed="false" title="Random faults every few seconds until you turn it off">🐒 Chaos Monkey: off</button>
+        </div>
+      </header>
+      <div class="gd-progress" id="gd-progress" hidden><i id="gd-bar"></i><span id="gd-step"></span></div>
+      <ol class="gd-list" id="gd-list"></ol>
+    </section>
+
+    <section class="card" id="incidents-card">
+      <header>
+        <h2>Incidents &amp; reports <small id="incidents-sub">none yet</small></h2>
+        <div class="card-actions">
+          <button class="btn sm" id="incidents-export" title="All incidents with their samples, as JSON">⬇ Export JSON</button>
+          <button class="btn sm" id="incidents-clear">Clear</button>
+        </div>
+      </header>
+      <div class="incidents-wrap"><table class="incidents" id="incidents"></table></div>
     </section>
 
     <section class="card">
@@ -110,8 +157,17 @@
 
     <section class="grid two">
       <article class="card">
-        <header><h2>Event timeline</h2><span class="hint" id="events-hint">derived live from snapshots</span></header>
+        <header><h2>Event timeline <small id="events-hint">derived live from snapshots</small></h2>
+          <div class="chips" id="event-filters">
+            <button class="chip on" data-filter="all">All</button>
+            <button class="chip" data-filter="faults">Faults</button>
+            <button class="chip" data-filter="leaders">Leadership</button>
+            <button class="chip" data-filter="you">You</button>
+            <button class="chip" data-filter="incidents">Incidents</button>
+          </div>
+        </header>
         <ol class="events" id="events"></ol>
+        <p class="muted small events-tip">Click an event to locate its shard on the ring.</p>
       </article>
       <article class="card" id="history-card">
         <header><h2>History <small id="history-badge" class="badge">SQLite</small></h2><span class="hint" id="history-stats"></span></header>
@@ -119,7 +175,64 @@
         <p class="muted small" id="history-note">Recorded by the Python historian into SQLite, so it survives page reloads and restarts.</p>
       </article>
     </section>
+    <section class="card" id="logs-card">
+      <header>
+        <h2>Logs <small id="logs-count">0 lines</small></h2>
+        <div class="log-tools">
+          <input id="log-search" type="search" placeholder="Search logs… (/)" spellcheck="false" autocomplete="off">
+          <select id="log-source" aria-label="Source"><option value="all">all sources</option></select>
+          <div class="chips" id="log-levels"></div>
+          <label class="follow"><input type="checkbox" id="log-follow" checked> follow</label>
+          <button class="btn sm" id="log-pause">⏸ Pause</button>
+          <button class="btn sm" id="log-clear">Clear</button>
+          <button class="btn sm" id="log-download">⬇ .log</button>
+          <button class="btn sm" id="log-download-json">⬇ .jsonl</button>
+        </div>
+      </header>
+      <div class="log-list" id="log-list" role="log" aria-live="off"></div>
+      <p class="muted small" id="log-note">Merges dashboard events, chaos actions, alerts and client stats with the nodes' own server logs.</p>
+    </section>
   </main>
+
+  <dialog class="report-dialog" id="report-dialog">
+    <div class="report-toolbar">
+      <b id="report-heading">Incident report</b>
+      <div class="report-actions">
+        <button class="btn sm" id="report-print">🖨 Print / PDF</button>
+        <button class="btn sm" id="report-html">⬇ HTML</button>
+        <button class="btn sm" id="report-md">⬇ Markdown</button>
+        <button class="btn sm" id="report-copy">📋 Copy Markdown</button>
+        <button class="btn sm" id="report-close" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <div class="report-paper" id="report-body"></div>
+  </dialog>
+
+  <dialog class="report-dialog consistency-dialog" id="consistency-dialog">
+    <div class="report-toolbar">
+      <b>Consistency: live linearizability checking</b>
+      <div class="report-actions"><button class="btn sm" id="consistency-close" aria-label="Close">✕</button></div>
+    </div>
+    <div class="consistency-body" id="consistency-body"></div>
+  </dialog>
+
+  <dialog class="shortcuts-dialog" id="shortcuts-dialog">
+    <h3>Keyboard shortcuts</h3>
+    <dl>
+      <dt><kbd>K</kbd></dt><dd>Kill the busiest leader (SIGKILL)</dd>
+      <dt><kbd>P</kbd></dt><dd>Partition a random node</dd>
+      <dt><kbd>L</kbd></dt><dd>30% packet loss on a random node</dd>
+      <dt><kbd>H</kbd></dt><dd>Heal everything</dd>
+      <dt><kbd>G</kbd></dt><dd>Run Game Day (the selected experiments)</dd>
+      <dt><kbd>M</kbd></dt><dd>Toggle Chaos Monkey</dd>
+      <dt><kbd>C</kbd></dt><dd>Consistency details</dd>
+      <dt><kbd>R</kbd></dt><dd>Open the latest incident report</dd>
+      <dt><kbd>A</kbd></dt><dd>Open the alert history</dd>
+      <dt><kbd>/</kbd></dt><dd>Search the logs</dd>
+      <dt><kbd>Esc</kbd></dt><dd>Close dialogs</dd>
+    </dl>
+    <form method="dialog"><button class="btn">Close</button></form>
+  </dialog>
 
   <footer>
     <span>DistKV — Go · TypeScript · Python · Rust</span>

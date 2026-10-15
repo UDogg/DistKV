@@ -254,6 +254,12 @@ throughput  ~800 ops/s     p99  ~3.6 ms     shards 24 / 24     nodes 5 / 5</pre>
 "failed_total":<span class="ok">0</span>          <span class="c"># 9,952 client operations, none failed</span></pre></div>
         </div></li>
         <li><div>
+          <h4>Follow the incident</h4>
+          <p>The kill opens <b>incident #1</b>: a red alert slides in, and a strip above the charts shows its severity, elapsed time and recovery progress. Press <b>🩹 Heal everything</b> (or <kbd>H</kbd>) and a green <b>resolved</b> alert follows once every node and shard is healthy again.</p>
+          <p>For the full tour, press <b>▶ Run Game Day</b>: five chaos experiments run one after another and each is judged automatically, including a live <b>linearizability</b> check of real client histories (the <b>✓ LINEARIZABLE</b> pill in the header). Or switch on <b>🐒 Chaos Monkey</b>.</p>
+          <p>Open <b>📄 Report</b> in the <b>Incidents &amp; reports</b> card for the post-incident review: time to recover, client availability, per-shard failover times, charts and a timeline. Download it as HTML or Markdown, or print it to PDF. The <b>Logs</b> card shows each node's own server log next to the dashboard's events.</p>
+        </div></li>
+        <li><div>
           <h4>Stop it</h4>
           <div class="term"><button class="copy" type="button">Copy</button><pre><span class="p">$ </span>docker stop distkv-demo</pre></div>
         </div></li>

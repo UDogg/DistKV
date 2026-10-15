@@ -56,6 +56,8 @@ jobs:
         run: go test -count=3 -run 'Unreliable|Backup|Snapshot|Lease' -timeout 15m ./internal/raft/
       - name: End-to-end chaos (linearizability, availability, rolling restart)
         run: go test -count=1 -v -run Chaos -timeout 15m ./test/e2e/
+      - name: Demo consistency probe (epoch-based linearizability checking under a node kill)
+        run: go test -race -count=1 -v -run 'Probe|Segment|Carried' ./cmd/distkv-demo/
 
   fuzz:
     runs-on: ubuntu-latest

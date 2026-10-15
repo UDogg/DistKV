@@ -188,6 +188,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	if s.cfg.EnableFaultInjection && s.faults.isolated.Load() {
+		// See below: refuse rather than stream a one-node view. (Clients
+		// retry; the demo's proxy picks another node.)
+		writeError(w, http.StatusServiceUnavailable, api.ErrorResponse{Error: "node is partitioned from its peers", Code: api.CodeUnavailable})
+		return
+	}
 	interval := time.Second
 	if v := r.URL.Query().Get("interval"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= 250*time.Millisecond {
@@ -199,9 +205,19 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	h.Set("Cache-Control", "no-cache")
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
+	// If this node dies, browsers reconnect (to another node, via a proxy or
+	// a load balancer) after 500 ms instead of the EventSource default of ~3 s.
+	fmt.Fprint(w, "retry: 500\n\n")
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
+		// A node cut off from its peers (fault injection) only sees itself:
+		// its snapshots would show every other node down and every shard
+		// leaderless. End the stream so the client reconnects elsewhere (the
+		// demo's proxy skips partitioned nodes).
+		if s.cfg.EnableFaultInjection && s.faults.isolated.Load() {
+			return
+		}
 		data, _ := json.Marshal(s.clusterStatus(r.Context()))
 		if _, err := fmt.Fprintf(w, "event: cluster\ndata: %s\n\n", data); err != nil {
 			return

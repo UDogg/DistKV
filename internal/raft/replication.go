@@ -428,4 +428,8 @@ func (n *Node) compactStorage() {
 		n.fatal(err)
 	}
 	n.durableIndex = n.rlog.lastIndex()
+	// The leader counts its own durable entries towards the quorum, and this
+	// may be what completes one (a concurrent sync loop that finds nothing
+	// left to sync relies on it).
+	n.maybeAdvanceCommit()
 }

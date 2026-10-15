@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -41,6 +42,10 @@ func TestEventStreamAndLiveLoad(t *testing.T) {
 	}
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	// Fast reconnects when the serving node dies.
+	if !sc.Scan() || sc.Text() != "retry: 500" {
+		t.Fatalf("stream must start with a retry hint, got %q", sc.Text())
+	}
 	deadline := time.Now().Add(8 * time.Second)
 	events := 0
 	for sc.Scan() && time.Now().Before(deadline) {
@@ -89,7 +94,30 @@ func TestFaultInjectionIsolatesNode(t *testing.T) {
 			t.Fatalf("faults: %d", resp.StatusCode)
 		}
 	}
+	// An isolated node only sees itself, so it stops serving the event
+	// stream (clients reconnect to a node with a real view).
+	stream, err := http.Get(ep + "/v1/events?interval=250ms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended := make(chan struct{})
+	go func() {
+		io.Copy(io.Discard, stream.Body)
+		stream.Body.Close()
+		close(ended)
+	}()
+
 	post(api.Faults{Isolated: true})
+	select {
+	case <-ended:
+	case <-time.After(3 * time.Second):
+		t.Fatal("an isolated node kept streaming its one-node view")
+	}
+	if resp, err := http.Get(ep + "/v1/events"); err != nil || resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("new stream on an isolated node: %v %v, want 503", resp, err)
+	} else {
+		resp.Body.Close()
+	}
 
 	// Every shard must end up led by one of the two connected nodes.
 	deadline := time.Now().Add(10 * time.Second)
