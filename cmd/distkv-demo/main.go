@@ -785,10 +785,14 @@ func readLog(path string, off, tail, limit int64) ([]string, int64, error) {
 	next := start + int64(end)
 	text := string(buf[:end])
 	if partial {
-		// Started mid-line: drop the fragment.
-		if i := strings.IndexByte(text, '\n'); i >= 0 {
-			text = text[i+1:]
+		// Started mid-line: drop the fragment. With no line start in the
+		// window at all, stay in tail mode rather than hand out an offset
+		// in the middle of a line.
+		i := strings.IndexByte(text, '\n')
+		if i < 0 {
+			return []string{}, -1, nil
 		}
+		text = text[i+1:]
 	}
 	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 	if text == "" {

@@ -39,7 +39,11 @@ const (
 	carryWindow    = 30 * time.Second
 	probeMaxSteps  = 2_000_000
 	maxViolations  = 5
-	maxEpochViews  = 300
+	// maxPending bounds a key's unchecked history: while its shard stays
+	// leaderless no barrier can close the epoch, so stop adding operations
+	// to it (the checker's search grows quickly with concurrent unknowns).
+	maxPending    = 600
+	maxEpochViews = 300
 )
 
 type probeOptions struct {
@@ -155,12 +159,18 @@ func (p *probe) runProbe(ctx context.Context) {
 	// an earlier run (the demo's data directory persists).
 	for i := 0; i < p.opt.keys; i++ {
 		k := p.key(i)
-		for ctx.Err() == nil {
+		for {
 			if op, ok := p.barrierRead(ctx, k); ok {
+				p.mu.Lock()
 				p.pin[k], p.opened[k] = op, time.Now()
+				p.mu.Unlock()
 				break
 			}
-			time.Sleep(200 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(200 * time.Millisecond):
+			}
 		}
 	}
 	var wg sync.WaitGroup
@@ -209,6 +219,12 @@ func (p *probe) worker(ctx context.Context, w int) {
 // (a failed read constrains nothing and is dropped).
 func (p *probe) do(ctx context.Context, rng *rand.Rand, w, seq int) (linearizability.Op, bool) {
 	key := p.key(rng.Intn(p.opt.keys))
+	p.mu.Lock()
+	backlog := len(p.seg[key])
+	p.mu.Unlock()
+	if backlog >= maxPending {
+		return linearizability.Op{}, false
+	}
 	opCtx, cancel := context.WithTimeout(ctx, p.opt.opTimeout)
 	defer cancel()
 	op := linearizability.Op{ClientID: w, Key: key, Call: p.now()}

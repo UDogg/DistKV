@@ -188,6 +188,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	if s.cfg.EnableFaultInjection && s.faults.isolated.Load() {
+		// See below: refuse rather than stream a one-node view. (Clients
+		// retry; the demo's proxy picks another node.)
+		writeError(w, http.StatusServiceUnavailable, api.ErrorResponse{Error: "node is partitioned from its peers", Code: api.CodeUnavailable})
+		return
+	}
 	interval := time.Second
 	if v := r.URL.Query().Get("interval"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= 250*time.Millisecond {

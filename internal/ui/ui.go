@@ -32,7 +32,8 @@ func FS() fs.FS {
 
 type asset struct {
 	raw, gz []byte
-	etag    string
+	etag    string // of raw; the gzip variant's is distinct (RFC 9110 §8.8.3)
+	gzEtag  string
 	ctype   string
 }
 
@@ -40,7 +41,9 @@ type asset struct {
 // dashboard becomes about 50 KB on the wire, and a reload costs a 304.
 var assets = sync.OnceValue(func() map[string]*asset {
 	m := map[string]*asset{}
-	fs.WalkDir(FS(), ".", func(p string, d fs.DirEntry, err error) error {
+	// The files are embedded in the binary: failing to read one is a build
+	// defect, not a runtime condition, so fail loudly.
+	err := fs.WalkDir(FS(), ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -63,11 +66,15 @@ var assets = sync.OnceValue(func() map[string]*asset {
 			zw.Close()
 			if b.Len() < len(raw) {
 				a.gz = b.Bytes()
+				a.gzEtag = strings.TrimSuffix(a.etag, `"`) + `-gz"`
 			}
 		}
 		m[p] = a
 		return nil
 	})
+	if err != nil {
+		panic("ui: reading embedded dashboard: " + err.Error())
+	}
 	return m
 })
 
@@ -97,19 +104,21 @@ func Handler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
+		body, etag, gz := a.raw, a.etag, a.gz != nil && acceptsGzip(r.Header.Get("Accept-Encoding"))
+		if gz {
+			body, etag = a.gz, a.gzEtag
+		}
 		h := w.Header()
 		h.Set("Content-Type", a.ctype)
-		h.Set("ETag", a.etag)
+		h.Set("ETag", etag)
 		h.Set("Cache-Control", "no-cache") // revalidate: a 304 is cheap
 		h.Set("Vary", "Accept-Encoding")
-		if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, a.etag) {
+		if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, etag) {
 			w.WriteHeader(http.StatusNotModified)
 			return
 		}
-		body := a.raw
-		if a.gz != nil && acceptsGzip(r.Header.Get("Accept-Encoding")) {
+		if gz {
 			h.Set("Content-Encoding", "gzip")
-			body = a.gz
 		}
 		h.Set("Content-Length", strconv.Itoa(len(body)))
 		if r.Method == http.MethodHead {

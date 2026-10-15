@@ -153,8 +153,8 @@ export const EXPERIMENTS: Experiment[] = [
       await ctx.scenario("rolling");
       return ["graceful stop → start of every node, one at a time"];
     },
-    verify: (_inc, s) => [
-      { name: "no failovers (hand-offs only)", ok: s.failovers === 0, detail: `${s.failovers} failovers` },
+    verify: (inc, s) => [
+      { name: "no failovers (hand-offs only)", ok: s.failovers === 0, detail: `${s.failovers} failovers, ${inc.leaderChanges} leader changes by hand-off` },
       noFailedOps(s),
       linearizable(s),
     ],

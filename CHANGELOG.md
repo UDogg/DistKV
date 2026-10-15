@@ -55,7 +55,16 @@
   reproduced deterministically by a new test.
 - An isolated node (fault injection) kept serving `/v1/events` with its one-node view (every shard
   leaderless), so a dashboard observing through it reported a cluster-wide outage. It now ends the
-  stream and clients reconnect to a node with a real view.
+  stream and answers new ones with 503. The dashboard retries (EventSource alone gives up on an error
+  status) and reconnects through a node with a real view, or shows RECONNECTING until the partition
+  heals.
+- Game Day: a snapshot taken mid-hand-off during a graceful stop was counted as a failover, so the
+  rolling-restart hypothesis was occasionally rejected although every hand-off succeeded. Such leader
+  gaps now count as hand-offs.
+- From a review of the branch: a failed node action could leave its button disabled; timeline
+  events added below the visible head (from the historian) weren't shown; the node-log tail could
+  resume mid-line; gzip and identity responses shared one strong ETag; the probe's per-key backlog
+  was unbounded while a shard stayed leaderless; its start-up pin loop ignored cancellation.
 - Demo supervisor: a start issued right after a kill or graceful stop could be a no-op (the stop
   changed the node's state asynchronously), or could start a second process while the first was
   still shutting down. Stops now change state immediately and starts wait for the old process.

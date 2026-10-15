@@ -28,12 +28,21 @@ export class LiveBackend implements Backend {
   constructor(private readonly base: string = "", private readonly historianUrl: string | null = null) {}
 
   subscribe(onSnapshot: (s: ClusterStatus) => void, onConn: (c: ConnState) => void): void {
-    const es = new EventSource(`${this.base}/v1/events?interval=1s`);
-    es.addEventListener("cluster", (ev) => {
-      onConn("live");
-      onSnapshot(JSON.parse((ev as MessageEvent).data));
-    });
-    es.onerror = () => onConn("reconnecting"); // EventSource reconnects by itself
+    const connect = () => {
+      const es = new EventSource(`${this.base}/v1/events?interval=1s`);
+      es.addEventListener("cluster", (ev) => {
+        onConn("live");
+        onSnapshot(JSON.parse((ev as MessageEvent).data));
+      });
+      es.onerror = () => {
+        onConn("reconnecting");
+        // EventSource retries dropped streams by itself, but gives up for
+        // good on an error status (e.g. 503 from a partitioned node, or 502
+        // from a proxy): retry those ourselves.
+        if (es.readyState === EventSource.CLOSED) setTimeout(connect, 1000);
+      };
+    };
+    connect();
   }
 
   async demoInfo(): Promise<DemoInfo | null> {

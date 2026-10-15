@@ -74,6 +74,8 @@ export interface Incident {
   shards: number[];
   failovers: Failover[];
   leaderChanges: number;
+  /** Leadership hand-offs from gracefully stopping nodes seen mid-way. */
+  handoffs?: number;
   quorumLost: number[];
   timeline: TimelineItem[];
   samples: Sample[];
@@ -337,7 +339,13 @@ export class IncidentTracker {
       if (!o) continue;
       const was = o.leader ?? "";
       const now = sh.leader ?? "";
-      if (was && !now) inc.failovers.push({ shard: sh.shard, from: was, lostAt: s.ts });
+      // A graceful stop hands leadership off (TimeoutNow): the old leader
+      // steps down and the target wins milliseconds later, and a snapshot
+      // can land in between. That is a planned hand-off, not a failover.
+      if (was && !now) {
+        if (handedOff(was)) inc.handoffs = (inc.handoffs ?? 0) + 1;
+        else inc.failovers.push({ shard: sh.shard, from: was, lostAt: s.ts });
+      }
       // A fast election can complete between snapshots: the leader moved
       // straight off a dead or partitioned node. That is a failover too
       // (unlike a graceful transfer or rebalancing, where the old leader is fine).

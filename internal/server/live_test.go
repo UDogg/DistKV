@@ -113,6 +113,11 @@ func TestFaultInjectionIsolatesNode(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("an isolated node kept streaming its one-node view")
 	}
+	if resp, err := http.Get(ep + "/v1/events"); err != nil || resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("new stream on an isolated node: %v %v, want 503", resp, err)
+	} else {
+		resp.Body.Close()
+	}
 
 	// Every shard must end up led by one of the two connected nodes.
 	deadline := time.Now().Add(10 * time.Second)

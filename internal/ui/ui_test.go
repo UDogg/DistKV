@@ -64,8 +64,16 @@ func TestGzipAndETag(t *testing.T) {
 	if etag == "" {
 		t.Fatal("no ETag")
 	}
-	if rec := get(t, "/app.js", map[string]string{"If-None-Match": etag}); rec.Code != http.StatusNotModified || rec.Body.Len() != 0 {
+	if rec := get(t, "/app.js", map[string]string{"If-None-Match": etag, "Accept-Encoding": "gzip"}); rec.Code != http.StatusNotModified || rec.Body.Len() != 0 {
 		t.Fatalf("revalidation: %d, %d bytes", rec.Code, rec.Body.Len())
+	}
+	// Each content-coding has its own strong validator.
+	identity := get(t, "/app.js", nil).Header().Get("ETag")
+	if identity == etag {
+		t.Fatal("gzip and identity responses share an ETag")
+	}
+	if rec := get(t, "/app.js", map[string]string{"If-None-Match": identity, "Accept-Encoding": "gzip"}); rec.Code != 200 {
+		t.Fatalf("identity ETag revalidated a gzip response: %d", rec.Code)
 	}
 	if rec := get(t, "/app.js", map[string]string{"If-None-Match": `"stale"`}); rec.Code != 200 {
 		t.Fatalf("stale ETag: %d", rec.Code)

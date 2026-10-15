@@ -566,8 +566,18 @@ class App {
     const prev = this.shownEvents;
     // Usually nothing changed, or new events arrived at the top: insert just
     // those (and animate only them) instead of rebuilding 150 items.
+    // The fast path applies only if everything after the new head is exactly
+    // what is shown (minus what the 150-item cap pushed off the end); events
+    // added anywhere else (e.g. older ones loaded from the historian) need a
+    // full render.
     const added = prev.length ? list.indexOf(prev[0]) : -1;
-    const sameTail = added >= 0 && this.shownFilter === this.eventFilter && list.slice(added).every((e, i) => i >= prev.length || e === prev[i]);
+    const tail = list.length - added;
+    const sameTail =
+      added >= 0 &&
+      this.shownFilter === this.eventFilter &&
+      tail <= prev.length &&
+      (tail === prev.length || list.length === 150) &&
+      list.slice(added).every((e, i) => e === prev[i]);
     if (sameTail && list.length) {
       if (added > 0) {
         ol.insertAdjacentHTML("afterbegin", list.slice(0, added).map((e) => item(e, true)).join(""));
@@ -896,15 +906,20 @@ class App {
     $("nodes").addEventListener("click", (e) => {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-node]");
       if (b) {
+        // Re-enable when done: an unchanged card isn't re-rendered (setHTML),
+        // so a failed action must not leave its button disabled.
         b.disabled = true;
-        this.act(b.dataset.node!, b.dataset.act!);
+        this.act(b.dataset.node!, b.dataset.act!).finally(() => (b.disabled = false));
       }
     });
     document.querySelectorAll<HTMLButtonElement>("[data-scenario]").forEach((b) =>
       b.addEventListener("click", async () => {
         b.disabled = true;
-        await this.scenario(b.dataset.scenario!);
-        b.disabled = false;
+        try {
+          await this.scenario(b.dataset.scenario!);
+        } finally {
+          b.disabled = false;
+        }
       }),
     );
 

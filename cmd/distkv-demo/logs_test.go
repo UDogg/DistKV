@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -51,6 +52,14 @@ func TestReadLogIncremental(t *testing.T) {
 	lines, _, _ = readLog(path, 1<<20, 1024, 1024)
 	if len(lines) != 4 {
 		t.Fatalf("stale offset: %q", lines)
+	}
+
+	// A tail window inside one long line has no line start: no lines, and
+	// the caller stays in tail mode instead of resuming mid-line.
+	os.WriteFile(path, []byte("x\n"+strings.Repeat("y", 100)), 0o644)
+	lines, next, _ = readLog(path, -1, 10, 1024)
+	if len(lines) != 0 || next != -1 {
+		t.Fatalf("tail inside a long line: %q %d", lines, next)
 	}
 
 	// A line longer than the read limit is delivered in pieces, not stuck.
