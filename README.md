@@ -78,7 +78,8 @@ writes, and the wire codec is fuzzed.
 
 ### 📊 Live dashboard and chaos lab
 A TypeScript dashboard embedded in every binary: live charts over SSE, a hash-ring visualisation,
-a shard matrix, an incident timeline, and buttons for `kill -9`, **network partitions** and **packet loss**.
+a shard matrix, and buttons for `kill -9`, **network partitions** and **packet loss**. Every fault opens an
+**incident** with **alerts**, a downloadable **post-incident report** and a searchable **log console**.
 
 </td>
 <td valign="top">
@@ -134,6 +135,41 @@ unreachable, then each shard's leader moving within the same second.
 
 **The history panel** comes from the Python historian, which records every second into
 **SQLite**, so the timeline survives page reloads and restarts.
+
+</td>
+</tr>
+</table>
+
+## 🚨 Incidents, alerts and reports
+
+<table>
+<tr>
+<td width="60%"><img src="docs/assets/incident.png" alt="An incident open after kill -9, with its alert and live recovery strip"></td>
+<td width="40%" valign="top">
+
+**Break something and the dashboard runs the incident for you:**
+
+- 🚨 **an alert when it starts**: what was injected (or detected) and what broke
+- 📶 **a live strip** with elapsed time, severity and recovery progress
+- ⚠️ **escalations** if it gets worse: another node, or a shard losing quorum
+- ✅ **an alert when it heals**, with time to recover, failed client operations and failovers
+
+Alerts can also beep and send desktop notifications (🔔 menu). It works for faults injected from
+the terminal too: the dashboard detects them from the cluster's own state.
+
+</td>
+</tr>
+<tr>
+<td><img src="docs/assets/report.png" alt="A generated incident report"></td>
+<td valign="top">
+
+**Each incident produces a report**: summary, SLO findings, impact, per-shard failover times,
+metric charts of the incident window, a timeline and recommendations. Download it as
+**HTML** or **Markdown**, copy it into an issue, or print it to **PDF**.
+
+**The log console** merges cluster events, chaos actions, alerts and client stats with each
+node's **own server log** (streamed by the demo supervisor), with level filters, search and
+`.log`/`.jsonl` export. Keyboard: <kbd>K</kbd> kill · <kbd>P</kbd> partition · <kbd>H</kbd> heal · <kbd>R</kbd> report · <kbd>?</kbd> help.
 
 </td>
 </tr>

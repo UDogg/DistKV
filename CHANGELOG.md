@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased: incidents, alerts and reports
+
+### New
+- **Incidents.** Every chaos action, or any unhealthy state the dashboard detects on its own (for
+  example a container killed from the terminal), opens an incident. It resolves after two fully
+  healthy snapshots in a row, and gets SEV1 to SEV3 from its impact.
+- **Alerts** when an incident opens, escalates (another fault, or a shard leaderless for 5 s, i.e.
+  lost quorum) and resolves. There's also a heal alert, a bell with the alert history, optional sound
+  and desktop notifications, and a tab-title badge.
+- **Live incident strip** with elapsed time, severity and recovery progress.
+- **Incident reports**: summary, SLO findings, impact, per-shard failover times, charts of the
+  incident window, a timeline and recommendations. Download as HTML or Markdown, copy, or print
+  to PDF. Incidents are kept in the browser (localStorage) across reloads.
+- **Log console** merging dashboard events, chaos actions, alerts, client stats and each node's
+  own server log. It has level and source filters, search, follow/pause, and `.log`/`.jsonl` export.
+  The demo supervisor serves node logs incrementally at `GET /demo/nodes/{id}/logs?offset=N`.
+- Event timeline filters (faults, leadership, your actions, incidents). Clicking a shard event
+  locates the shard on the ring and in the matrix.
+- Keyboard shortcuts: `K` kill, `P` partition, `L` packet loss, `H` heal, `R` latest report, `A` alerts,
+  `/` search logs, `?` help.
+
+### Fixed
+- `/v1/events` now sends an SSE `retry: 500` hint. When the node serving the stream dies, browsers
+  reconnect in 0.5 s instead of about 3 s, so the dashboard sees the failure sooner.
+- Server logs printed the `node` attribute twice on every Raft line.
+- The top bar overflowed horizontally on phone-width screens.
+
 ## v0.2.0: polyglot, live dashboard, chaos lab
 
 ### New

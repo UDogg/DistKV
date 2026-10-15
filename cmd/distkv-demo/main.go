@@ -570,6 +570,25 @@ func (sv *supervisor) routes() http.Handler {
 		}
 		writeJSON(w, map[string]string{"node": n.ID, "status": "ok"})
 	})
+	// Incremental node logs for the dashboard's log console: pass back the
+	// returned offset to receive only new lines (-1 = the last few lines).
+	mux.HandleFunc("GET /demo/nodes/{id}/logs", func(w http.ResponseWriter, r *http.Request) {
+		n := sv.find(r.PathValue("id"))
+		if n == nil {
+			http.Error(w, "unknown node", http.StatusNotFound)
+			return
+		}
+		off, err := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
+		if err != nil {
+			off = -1
+		}
+		lines, next, err := readLog(filepath.Join(sv.cfg.dir, n.ID, "node.log"), off, 16<<10, 256<<10)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"node": n.ID, "offset": next, "lines": lines})
+	})
 	mux.HandleFunc("POST /demo/load", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Rate      *int64   `json:"rate"`
@@ -663,4 +682,52 @@ func writeJSONStatus(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// readLog returns the complete lines of the file at path that start at byte
+// offset off, and the offset to continue from. A negative offset, or one past
+// the end (the file was recreated), returns the last tail bytes instead. At
+// most limit bytes are read per call.
+func readLog(path string, off, tail, limit int64) ([]string, int64, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, 0, nil
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, 0, err
+	}
+	size := st.Size()
+	start, partial := off, false
+	if off < 0 || off > size {
+		start = max(0, size-tail)
+		partial = start > 0
+	}
+	buf := make([]byte, min(limit, size-start))
+	n, err := f.ReadAt(buf, start)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, 0, err
+	}
+	buf = buf[:n]
+	end := strings.LastIndexByte(string(buf), '\n') + 1
+	if end == 0 && int64(n) == limit {
+		end = n // a single line longer than limit: deliver it in pieces
+	}
+	next := start + int64(end)
+	text := string(buf[:end])
+	if partial {
+		// Started mid-line: drop the fragment.
+		if i := strings.IndexByte(text, '\n'); i >= 0 {
+			text = text[i+1:]
+		}
+	}
+	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+	if text == "" {
+		lines = []string{}
+	}
+	return lines, next, nil
 }

@@ -254,7 +254,7 @@ func (s *Server) openGroup(shard cluster.ShardID) (*group, error) {
 		Storage:           storage,
 		Transport:         s.transport.ForShard(shard),
 		StateMachine:      store,
-		Logger:            s.logger.With("shard", int(shard)),
+		Logger:            s.cfg.Logger.With("shard", int(shard)), // raft adds "node" itself
 	})
 	if err != nil {
 		storage.Close()

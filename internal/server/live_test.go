@@ -41,6 +41,10 @@ func TestEventStreamAndLiveLoad(t *testing.T) {
 	}
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	// Fast reconnects when the serving node dies.
+	if !sc.Scan() || sc.Text() != "retry: 500" {
+		t.Fatalf("stream must start with a retry hint, got %q", sc.Text())
+	}
 	deadline := time.Now().Add(8 * time.Second)
 	events := 0
 	for sc.Scan() && time.Now().Before(deadline) {

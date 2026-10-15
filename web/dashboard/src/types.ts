@@ -126,6 +126,12 @@ export interface HistorianStats {
   first_ts?: number;
 }
 
+/** New lines of a node's log, and the offset to continue from. */
+export interface LogChunk {
+  offset: number;
+  lines: string[];
+}
+
 export type ConnState = "live" | "reconnecting" | "sim";
 
 /** Everything the UI needs from a cluster, live or simulated. */
@@ -140,4 +146,6 @@ export interface Backend {
   history(minutes: number): Promise<HistoryPoint[] | null>;
   historianEvents(): Promise<HistorianEvent[] | null>;
   historianStats(): Promise<HistorianStats | null>;
+  /** Node log lines after offset (-1 = recent tail); null when unavailable. */
+  nodeLogs(id: string, offset: number): Promise<LogChunk | null>;
 }

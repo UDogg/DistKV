@@ -199,6 +199,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	h.Set("Cache-Control", "no-cache")
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
+	// If this node dies, browsers reconnect (to another node, via a proxy or
+	// a load balancer) after 500 ms instead of the EventSource default of ~3 s.
+	fmt.Fprint(w, "retry: 500\n\n")
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {

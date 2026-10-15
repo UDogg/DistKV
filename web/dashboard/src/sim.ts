@@ -10,6 +10,7 @@ import type {
   HistorianStats,
   HistoryPoint,
   KVResult,
+  LogChunk,
   ProcState,
 } from "./types";
 
@@ -57,6 +58,9 @@ export class SimBackend implements Backend {
   private readonly hist: HistoryPoint[] = [];
   private okTotal = 0;
   private failedTotal = 0;
+  // Per-node log lines in the real server's logfmt format; base is the
+  // offset of lines[0], so clients can resume like with the real endpoint.
+  private readonly logs = new Map<string, { base: number; lines: string[] }>();
 
   constructor(nNodes = 5, nShards = 24) {
     const members = Array.from({ length: nNodes }, (_, i) => ({ id: `n${i + 1}`, addr: `http://127.0.0.1:${7101 + i}` }));
@@ -79,6 +83,7 @@ export class SimBackend implements Backend {
       electionAt: 0,
       lag: {},
     }));
+    for (const n of this.nodes) this.bootLogs(n);
     // Seed an hour of plausible history for the "SQLite" panel.
     for (let t = now - 15 * 60_000; t < now; t += 5000) {
       const wave = 1 + 0.15 * Math.sin(t / 60_000);
@@ -121,6 +126,8 @@ export class SimBackend implements Backend {
       const live = reps.filter((n) => this.connected(n));
       const leaderOk = sh.leader !== "" && this.connected(this.node(sh.leader));
       if (!leaderOk && sh.leader !== "") {
+        const old = this.node(sh.leader);
+        if (this.up(old)) this.log(old.id, "WARN", "leader lost contact with quorum; stepping down", { shard: s, term: sh.term });
         sh.leader = "";
         sh.electionAt = now + ELECTION_MIN_MS + Math.random() * ELECTION_JITTER_MS;
         this.disturbance = Math.min(1, this.disturbance + 0.25);
@@ -131,6 +138,8 @@ export class SimBackend implements Backend {
         sh.leader = live[Math.floor(Math.random() * live.length)].id;
         sh.term++;
         sh.electionAt = 0;
+        this.log(sh.leader, "INFO", "starting election", { shard: s, term: sh.term });
+        this.log(sh.leader, "INFO", "became leader", { shard: s, term: sh.term, last_index: sh.commit });
       }
       const drop = Math.max(0, ...reps.map((n) => n.faults.drop_percent));
       const prevLag = sh.lag;
@@ -150,8 +159,12 @@ export class SimBackend implements Backend {
         const pref = this.topo.replicas(s)[0];
         const sh = this.shards[s];
         if (sh.leader && sh.leader !== pref && this.connected(this.node(pref))) {
+          this.log(sh.leader, "INFO", "rebalancing leadership", { shard: s, to: pref });
+          this.log(sh.leader, "INFO", "leadership transfer started", { shard: s, target: pref, term: sh.term });
           sh.leader = pref;
           sh.term++;
+          this.log(pref, "INFO", "received timeout-now; campaigning", { shard: s, term: sh.term });
+          this.log(pref, "INFO", "became leader", { shard: s, term: sh.term, last_index: sh.commit });
           break;
         }
       }
@@ -244,27 +257,66 @@ export class SimBackend implements Backend {
     const n = this.node(id);
     const now = Date.now();
     if (action === "start") {
-      if (n.state !== "running") Object.assign(n, { state: "running", since: now, starts: n.starts + 1, pid: this.nextPid++, startedAt: now });
+      if (n.state !== "running") {
+        Object.assign(n, { state: "running", since: now, starts: n.starts + 1, pid: this.nextPid++, startedAt: now });
+        this.bootLogs(n);
+      }
       return;
     }
     if (n.state !== "running") return;
     if (action === "stop") {
       // Graceful: leadership is handed off first, so no election gap.
+      this.log(id, "INFO", "received signal; shutting down gracefully", { signal: "terminated" });
+      this.log(id, "INFO", "shutting down: transferring leadership");
       for (let s = 0; s < this.shards.length; s++) {
         const sh = this.shards[s];
         if (sh.leader !== id) continue;
         const target = this.topo.replicas(s).find((r) => r !== id && this.connected(this.node(r)));
         if (target) {
+          this.log(id, "INFO", "leadership transfer started", { shard: s, target, term: sh.term });
           sh.leader = target;
           sh.term++;
+          this.log(target, "INFO", "received timeout-now; campaigning", { shard: s, term: sh.term });
+          this.log(target, "INFO", "became leader", { shard: s, term: sh.term, last_index: sh.commit });
         }
       }
+      this.log(id, "INFO", "shutdown complete");
     }
+    // A SIGKILLed process gets no chance to log anything.
     Object.assign(n, { state: action === "kill" ? "killed" : "stopped", since: now });
   }
 
   async setFaults(id: string, f: Faults): Promise<void> {
     this.node(id).faults = { ...f };
+    this.log(id, "WARN", "fault injection updated", { isolated: f.isolated, drop_percent: f.drop_percent, delay_ms: f.delay_ms });
+  }
+
+  async nodeLogs(id: string, offset: number): Promise<LogChunk> {
+    const l = this.logs.get(id) ?? { base: 0, lines: [] };
+    const end = l.base + l.lines.length;
+    const from = offset < 0 || offset > end ? Math.max(l.base, end - 60) : Math.max(offset, l.base);
+    return { offset: end, lines: l.lines.slice(from - l.base) };
+  }
+
+  private log(id: string, level: string, msg: string, attrs: Record<string, string | number | boolean> = {}): void {
+    let l = this.logs.get(id);
+    if (!l) this.logs.set(id, (l = { base: 0, lines: [] }));
+    const kv = Object.entries({ node: id, ...attrs })
+      .map(([k, v]) => `${k}=${typeof v === "string" && /[\s"=]/.test(v) ? JSON.stringify(v) : v}`)
+      .join(" ");
+    l.lines.push(`time=${new Date().toISOString()} level=${level} msg=${JSON.stringify(msg)} ${kv}`);
+    if (l.lines.length > 2000) {
+      l.lines.splice(0, 500);
+      l.base += 500;
+    }
+  }
+
+  private bootLogs(n: SimNode): void {
+    const hosted = this.shards.map((_, i) => i).filter((i) => this.topo.replicas(i).includes(n.id));
+    this.log(n.id, "INFO", "starting distkv", { version: "v0.2.0-sim", pid: n.pid });
+    this.log(n.id, "INFO", "node initialised", { shards_hosted: hosted.length, total_shards: this.shards.length, replication_factor: 3 });
+    for (const s of hosted) this.log(n.id, "INFO", "raft node started", { shard: s, term: this.shards[s]?.term ?? 1 });
+    this.log(n.id, "INFO", "serving", { addr: n.addr.replace(/^http:\/\//, ""), advertise: n.addr });
   }
 
   async setLoad(rate: number, readRatio: number): Promise<void> {

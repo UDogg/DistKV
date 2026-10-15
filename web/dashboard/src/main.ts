@@ -1,6 +1,10 @@
 import { Topology } from "../../../clients/typescript/src/routing";
+import { AlertCenter } from "./alerts";
 import { TimeSeriesChart } from "./charts";
+import { describe, IncidentTracker, summarize, type Incident, type Transition } from "./incidents";
 import { LiveBackend } from "./live";
+import { LogConsole, type Level } from "./logs";
+import { fmtDuration, REPORT_CSS, reportDocument, reportHTML, reportMarkdown } from "./report";
 import { RingView } from "./ring";
 import { SimBackend } from "./sim";
 import type { Backend, ClusterStatus, ConnState, DemoInfo, HistorianEvent, NodeSummary } from "./types";
@@ -51,6 +55,19 @@ function toast(msg: string, kind: "ok" | "bad" | "info" = "info"): void {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+function download(name: string, text: string, type: string): void {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+const stamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+
 // ---------------------------------------------------------------------------
 // Backend selection: ?sim, <meta distkv-mode=sim>, ?api=URL, or same origin.
 
@@ -86,7 +103,37 @@ const EVENT_STYLE: Record<string, [string, string]> = {
   healed: ["🩹", "ok"],
   shard_unavailable: ["⛔", "bad"],
   shard_recovered: ["✅", "ok"],
+  quorum_lost: ["🛑", "bad"],
   action: ["🧪", ""],
+  incident_open: ["🚨", "bad incident"],
+  incident_escalated: ["⚠️", "warn incident"],
+  incident_resolved: ["✅", "ok incident"],
+};
+
+const EVENT_FILTERS: Record<string, (kind: string) => boolean> = {
+  all: () => true,
+  faults: (k) => ["node_down", "node_up", "partitioned", "healed", "shard_unavailable", "shard_recovered", "quorum_lost"].includes(k),
+  leaders: (k) => ["leader_change", "election", "shard_recovered", "shard_unavailable"].includes(k),
+  you: (k) => k === "action",
+  incidents: (k) => k.startsWith("incident_"),
+};
+
+/** Log level for each derived event kind. */
+const EVENT_LEVEL: Record<string, Level> = {
+  node_down: "error",
+  shard_unavailable: "error",
+  quorum_lost: "error",
+  partitioned: "warn",
+  election: "warn",
+};
+
+/** What a chaos action is called in alerts and reports. */
+const ACT_TEXT: Record<string, (id: string) => string> = {
+  kill: (id) => `SIGKILL to ${id}`,
+  stop: (id) => `graceful stop of ${id}`,
+  start: (id) => `start ${id}`,
+  isolate: (id) => `network partition of ${id}`,
+  heal: (id) => `heal partition of ${id}`,
 };
 
 class App {
@@ -105,8 +152,47 @@ class App {
   private readonly histChart: TimeSeriesChart;
   private hoverShard: number | null = null;
   private loadSynced = false;
+  private readonly alerts: AlertCenter;
+  private readonly tracker: IncidentTracker;
+  private readonly logs: LogConsole;
+  private readonly logOffsets = new Map<string, number>();
+  private pollingLogs = false;
+  private eventFilter = "all";
+  private reportId: number | null = null;
+  private lastClientLog = 0;
+  private lastClientFailed: number | null = null;
+  private lastSave = 0;
+  private locateTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly be: Backend) {
+    const style = document.createElement("style");
+    style.textContent = REPORT_CSS;
+    document.head.appendChild(style);
+    this.alerts = new AlertCenter(
+      $("alert-stack"),
+      $("alert-bell") as HTMLButtonElement,
+      $("alert-count"),
+      $("alert-panel"),
+      (id) => this.openReport(id),
+      () => this.scenario("heal"),
+    );
+    this.tracker = new IncidentTracker(be.mode, (t) => this.onIncident(t), this.loadIncidents());
+    this.logs = new LogConsole(
+      {
+        list: $("log-list"),
+        search: $("log-search") as HTMLInputElement,
+        source: $("log-source") as HTMLSelectElement,
+        levels: $("log-levels"),
+        follow: $("log-follow") as HTMLInputElement,
+        count: $("logs-count"),
+      },
+      (src) => (this.snap?.spec.members.some((m) => m.id === src) ? this.color(src) : undefined),
+    );
+    this.logs.onSelect = (e) => {
+      const sh = e.attrs.find(([k]) => k === "shard")?.[1];
+      if (sh !== undefined) this.locateShard(Number(sh));
+    };
+    this.logs.add("dashboard", "info", `dashboard started in ${be.mode === "sim" ? "simulation" : "live"} mode`);
     this.tp = new TimeSeriesChart($("chart-throughput") as HTMLCanvasElement, { minMax: 10 });
     this.lat = new TimeSeriesChart($("chart-latency") as HTMLCanvasElement, { log: true, unit: "ms", format: (v) => (v >= 1 ? v.toFixed(0) : v.toFixed(1)) });
     this.histChart = new TimeSeriesChart($("chart-history") as HTMLCanvasElement, { minMax: 10 });
@@ -122,14 +208,19 @@ class App {
     }
     this.be.subscribe((s) => this.onSnapshot(s), (c) => this.onConn(c));
     setInterval(() => this.pollDemo(), 2000);
+    setInterval(() => this.pollNodeLogs(), 2000);
+    setInterval(() => this.renderStrip(), 250);
+    this.renderIncidents();
     // History needs to know whether a historian is running, so it waits
     // for the first demo-info response.
     this.pollDemo().then(() => this.pollHistory());
     setInterval(() => this.pollHistory(), 10_000);
     this.wireControls();
+    this.wireIncidents();
   }
 
   private onConn(c: ConnState): void {
+    if (c === "reconnecting") this.logs.add("dashboard", "warn", "event stream lost; reconnecting");
     const pill = $("conn-pill");
     pill.className = `pill ${c === "reconnecting" ? "pill-warn" : "pill-ok"}`;
     pill.textContent = c === "live" ? "LIVE · SSE" : c === "sim" ? "SIMULATION" : "RECONNECTING";
@@ -164,16 +255,26 @@ class App {
       this.t.shift();
       Object.values(this.s).forEach((a) => a.shift());
     }
-    this.diff();
+    const tick = this.diff();
+    this.tracker.observe(s, this.demo, tick);
+    for (const e of tick) this.logs.add("cluster", EVENT_LEVEL[e.kind] ?? "info", e.detail, [], e.ts);
     this.render();
+    this.renderIncidents();
+    this.renderStrip();
+    if (this.reportId !== null && this.tracker.active?.id === this.reportId) this.renderReport();
+    if (this.tracker.active && Date.now() - this.lastSave > 10_000) this.saveIncidents();
   }
 
-  private diff(): void {
+  /** Derives events by comparing snapshots; returns this tick's events. */
+  private diff(): Ev[] {
     const a = this.prev;
     const b = this.snap!;
-    if (!a) return;
+    const tick: Ev[] = [];
+    if (!a) return tick;
     const push = (kind: string, detail: string) => {
-      this.events.unshift({ ts: b.ts, kind, detail });
+      const e = { ts: b.ts, kind, detail };
+      this.events.unshift(e);
+      tick.push(e);
       if (kind === "leader_change" || kind === "shard_recovered") this.leaderChanges.push(b.ts);
     };
     const pn = new Map(a.nodes.map((n) => [n.id, n]));
@@ -201,6 +302,7 @@ class App {
     if (this.events.length > 300) this.events.length = 300;
     const cutoff = b.ts - 5 * 60_000;
     this.leaderChanges = this.leaderChanges.filter((t) => t >= cutoff);
+    return tick;
   }
 
   private flash: number[] = [];
@@ -370,24 +472,64 @@ class App {
   }
 
   private renderEvents(): void {
-    const list = this.events.slice(0, 120);
+    const keep = EVENT_FILTERS[this.eventFilter] ?? EVENT_FILTERS.all;
+    const list = this.events.filter((e) => keep(e.kind)).slice(0, 150);
     $("events").innerHTML = list.length
       ? list
           .map((e) => {
             const [icon, cls] = EVENT_STYLE[e.kind] ?? ["•", ""];
-            return `<li class="${cls}"><time>${new Date(e.ts).toLocaleTimeString([], { hour12: false })}</time><span>${icon}</span><span>${esc(e.detail)}</span></li>`;
+            const sh = /shard (\d+)/.exec(e.detail)?.[1];
+            const inc = /^incident #(\d+)/i.exec(e.detail)?.[1];
+            const data = sh !== undefined ? ` data-shard="${sh}"` : inc !== undefined ? ` data-incident="${inc}"` : "";
+            return `<li class="${cls}${data ? " clickable" : ""}"${data}><time>${new Date(e.ts).toLocaleTimeString([], { hour12: false })}</time><span>${icon}</span><span>${esc(e.detail)}</span></li>`;
           })
           .join("")
-      : `<li><time></time><span>✨</span><span class="muted">All quiet. Try the chaos buttons.</span></li>`;
+      : `<li><time></time><span>✨</span><span class="muted">${this.events.length ? "Nothing matches this filter yet." : "All quiet. Try the chaos buttons."}</span></li>`;
+  }
+
+  /** Highlights a shard on the ring and in the matrix for a few seconds. */
+  private locateShard(sh: number): void {
+    if (!this.snap || !this.snap.shards[sh]) return;
+    this.hoverShard = sh;
+    this.renderRingCenter();
+    this.flash = [sh];
+    this.renderMatrix(this.snap);
+    clearTimeout(this.locateTimer);
+    this.locateTimer = setTimeout(() => {
+      this.hoverShard = null;
+      this.renderRingCenter();
+    }, 3500);
   }
 
   // ---- demo / historian polling -----------------------------------------------
 
+  private demoPolled = false;
+
   private async pollDemo(): Promise<void> {
     this.demo = await this.be.demoInfo();
+    this.demoPolled = true;
     const isDemo = !!this.demo?.demo;
     $("mode-pill").hidden = !isDemo;
     $("control-card").hidden = !isDemo;
+    document.querySelector<HTMLElement>("#incident-strip [data-scenario]")!.hidden = !isDemo;
+    const c = this.demo?.client;
+    if (c) {
+      if (this.lastClientFailed !== null && c.failed_total > this.lastClientFailed) {
+        const n = c.failed_total - this.lastClientFailed;
+        this.logs.add("client", "error", `${n} operation${n === 1 ? "" : "s"} failed after exhausting retries`, [["failed_total", String(c.failed_total)]]);
+      }
+      this.lastClientFailed = c.failed_total;
+      if (Date.now() - this.lastClientLog >= 10_000) {
+        this.lastClientLog = Date.now();
+        this.logs.add("client", "info", "traffic generator stats", [
+          ["ok_per_sec", String(c.last_second.ok)],
+          ["failed_per_sec", String(c.last_second.failed)],
+          ["availability_60s", `${(c.availability_60s * 100).toFixed(3)}%`],
+          ["ok_total", String(c.ok_total)],
+          ["failed_total", String(c.failed_total)],
+        ]);
+      }
+    }
     if (isDemo && !this.loadSynced) {
       this.loadSynced = true;
       ($("rate") as HTMLInputElement).value = String(this.demo!.rate);
@@ -438,23 +580,46 @@ class App {
 
   // ---- controls ------------------------------------------------------------------
 
-  private logAction(detail: string): void {
+  private logAction(detail: string, level: Level = "warn"): void {
     this.events.unshift({ ts: Date.now(), kind: "action", detail });
+    this.logs.add("chaos", level, detail);
     this.renderEvents();
   }
 
-  private async act(id: string, act: string): Promise<void> {
+  /**
+   * Runs one node action. Unless track is false (multi-step scenarios report
+   * themselves), chaos opens or escalates an incident and a heal is recorded
+   * against the open one.
+   */
+  private async act(id: string, act: string, opts: { track?: boolean; why?: string } = {}): Promise<void> {
     try {
       if (act === "isolate") await this.be.setFaults(id, { isolated: true, drop_percent: 0, delay_ms: 0 });
       else if (act === "heal") await this.be.setFaults(id, { isolated: false, drop_percent: 0, delay_ms: 0 });
       else await this.be.nodeAction(id, act as "kill" | "stop" | "start");
-      const verb = { kill: "SIGKILL →", stop: "graceful stop →", start: "starting", isolate: "partitioning", heal: "healing" }[act] ?? act;
-      this.logAction(`you: ${verb} ${id}`);
-      toast(`${verb} ${id}`, act === "kill" ? "bad" : "ok");
+      if (act === "stop") this.tracker.noteGracefulStop(id);
+      const text = (ACT_TEXT[act] ?? ((x: string) => `${act} ${x}`))(id) + (opts.why ? ` (${opts.why})` : "");
+      const healing = act === "start" || act === "heal";
+      this.logAction(`you: ${text}`, healing ? "info" : "warn");
+      if (opts.track !== false) {
+        this.tracker.action(healing ? "heal" : "chaos", text, this.demo);
+        if (healing) this.healAlert(text);
+      }
+      toast(text, act === "kill" ? "bad" : "ok");
       setTimeout(() => this.pollDemo(), 300);
     } catch (e) {
       toast(String(e), "bad");
+      this.logs.add("chaos", "error", `action failed: ${act} ${id}: ${e}`);
     }
+  }
+
+  private healAlert(what: string): void {
+    const inc = this.tracker.active;
+    this.alerts.raise({
+      level: "info",
+      title: inc ? `Healing incident #${inc.id}` : "Heal requested",
+      body: inc ? `${what}. Waiting for every node and shard to be healthy…` : `${what}. Nothing was broken.`,
+      incidentId: inc?.id,
+    });
   }
 
   private async scenario(name: string): Promise<void> {
@@ -465,7 +630,7 @@ class App {
     switch (name) {
       case "kill-leader": {
         const busiest = [...live].sort((a, b) => b.shards_led - a.shards_led)[0];
-        if (busiest) await this.act(busiest.id, "kill");
+        if (busiest) await this.act(busiest.id, "kill", { why: `busiest leader, ${busiest.shards_led} shards` });
         break;
       }
       case "partition": {
@@ -478,17 +643,26 @@ class App {
         if (!n) break;
         await this.be.setFaults(n.id, { isolated: false, drop_percent: 30, delay_ms: 5 });
         this.logAction(`you: 30% packet loss + 5ms delay on ${n.id}`);
+        this.tracker.action("chaos", `30% packet loss + 5 ms delay on ${n.id}`, this.demo);
         toast(`30% packet loss on ${n.id}`);
         break;
       }
       case "rolling": {
         toast("Rolling restart: graceful stop → start, one node at a time");
-        for (const n of s.spec.members) {
-          await this.act(n.id, "stop");
-          await sleep(2500);
-          await this.act(n.id, "start");
-          await sleep(3500);
+        // One incident for the whole procedure, kept open until it finishes.
+        this.tracker.action("chaos", "rolling restart (graceful stop → start, one node at a time)", this.demo);
+        this.tracker.hold();
+        try {
+          for (const n of s.spec.members) {
+            await this.act(n.id, "stop", { track: false });
+            await sleep(2500);
+            await this.act(n.id, "start", { track: false });
+            await sleep(3500);
+          }
+        } finally {
+          this.tracker.release();
         }
+        this.tracker.action("heal", "rolling restart finished", this.demo);
         toast("Rolling restart complete", "ok");
         break;
       }
@@ -498,7 +672,9 @@ class App {
           else if (n.faults && (n.faults.isolated || n.faults.drop_percent || n.faults.delay_ms))
             await this.be.setFaults(n.id, { isolated: false, drop_percent: 0, delay_ms: 0 });
         }
-        this.logAction("you: healed everything");
+        this.logAction("you: healed everything", "info");
+        this.tracker.action("heal", "heal everything", this.demo);
+        this.healAlert("Heal everything: restarting stopped nodes and clearing network faults");
         toast("Healing all nodes", "ok");
         break;
       }
@@ -562,6 +738,11 @@ class App {
       const out = $("kv-result");
       try {
         const r = await this.be.kv(op, key, value, ttl);
+        this.logs.add("kv", r.ok || r.status === 404 ? "info" : "warn", `${op.toUpperCase()} ${key} → ${r.status}`, [
+          ["shard", String(r.shard ?? "?")],
+          ["served_by", r.servedBy ?? "?"],
+          ["ms", r.ms.toFixed(1)],
+        ]);
         const predicted = this.topo?.shardForKey(key);
         const match = r.shard === undefined ? "" : r.shard === predicted ? " ✓ matches client-side hash" : " ✗ mismatch!";
         out.innerHTML =
@@ -600,7 +781,297 @@ class App {
       this.lat.draw();
       this.histChart.draw();
     });
+
+    $("event-filters").addEventListener("click", (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-filter]");
+      if (!b) return;
+      this.eventFilter = b.dataset.filter!;
+      $("event-filters").querySelectorAll(".chip").forEach((c) => c.classList.toggle("on", c === b));
+      this.renderEvents();
+    });
+    $("events").addEventListener("click", (e) => {
+      const li = (e.target as HTMLElement).closest<HTMLElement>("li[data-shard], li[data-incident]");
+      if (li?.dataset.shard) this.locateShard(Number(li.dataset.shard));
+      else if (li?.dataset.incident) this.openReport(Number(li.dataset.incident));
+    });
+
+    $("log-pause").addEventListener("click", () => {
+      const b = $("log-pause");
+      const paused = b.dataset.paused !== "1";
+      b.dataset.paused = paused ? "1" : "0";
+      b.textContent = paused ? "▶ Resume" : "⏸ Pause";
+      this.logs.setPaused(paused);
+    });
+    $("log-clear").addEventListener("click", () => this.logs.clear());
+    $("log-download").addEventListener("click", () => download(`distkv-${stamp()}.log`, this.logs.exportText(), "text/plain"));
+    $("log-download-json").addEventListener("click", () => download(`distkv-${stamp()}.jsonl`, this.logs.exportJSON(), "application/x-ndjson"));
+
+    // Keyboard shortcuts, ignored while typing.
+    document.addEventListener("keydown", (e) => {
+      const t = e.target as HTMLElement;
+      if (e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable) return;
+      if (document.querySelector("dialog[open]")) return;
+      const chaos = !$("control-card").hidden;
+      const run = (name: string) => {
+        if (!chaos) return toast("Chaos controls need the demo (make demo / make docker-demo) or the Pages simulation", "bad");
+        this.scenario(name);
+      };
+      switch (e.key) {
+        case "k": case "K": run("kill-leader"); break;
+        case "p": case "P": run("partition"); break;
+        case "l": case "L": run("lossy"); break;
+        case "h": case "H": run("heal"); break;
+        case "r": case "R": {
+          const latest = this.tracker.incidents[0];
+          if (latest) this.openReport(latest.id);
+          else toast("No incidents yet");
+          break;
+        }
+        case "a": case "A": $("alert-bell").click(); break;
+        case "/": e.preventDefault(); $("log-search").focus(); $("logs-card").scrollIntoView({ behavior: "smooth", block: "center" }); break;
+        case "?": ($("shortcuts-dialog") as HTMLDialogElement).showModal(); break;
+        default: return;
+      }
+    });
+    $("shortcuts-btn").addEventListener("click", () => ($("shortcuts-dialog") as HTMLDialogElement).showModal());
   }
+
+  // ---- incidents, alerts and reports ---------------------------------------------
+
+  private onIncident(t: Transition): void {
+    const inc = t.incident;
+    const now = Date.now();
+    const event = (kind: string, detail: string) => {
+      this.events.unshift({ ts: now, kind, detail });
+      this.renderEvents();
+    };
+    if (t.type === "opened") {
+      const what = inc.triggerKind === "action" ? `Fault injected: ${inc.trigger}.` : `Detected: ${inc.trigger}.`;
+      // Not sticky: the incident strip carries the state once the alert is gone.
+      this.alerts.raise({ level: "critical", incidentId: inc.id, heal: !!this.demo?.demo, title: `Incident #${inc.id} opened`, body: `${what} Watching the cluster recover…` });
+      this.alerts.setOpenIncidents(1);
+      event("incident_open", `Incident #${inc.id} opened: ${inc.trigger}`);
+      this.logs.add("incident", "error", `incident #${inc.id} opened`, [["trigger", inc.trigger], ["kind", inc.triggerKind]]);
+    } else if (t.type === "escalated") {
+      this.alerts.raise({ level: "warning", incidentId: inc.id, title: `Incident #${inc.id} escalated`, body: capitalize(t.detail) });
+      event("incident_escalated", `Incident #${inc.id} escalated: ${t.detail}`);
+      this.logs.add("incident", "warn", `incident #${inc.id} escalated`, [["detail", t.detail]]);
+    } else {
+      const s = summarize(inc);
+      const parts = [`${inc.severity}`];
+      if (s.clientFailed !== undefined) parts.push(`${s.clientFailed} failed client ops`);
+      if (s.availability !== undefined) parts.push(`${(s.availability * 100).toFixed(3)}% available`);
+      parts.push(s.failovers ? `${s.failovers} failovers (slowest ${s.failoversBounded ? "≤ " : ""}${fmtDuration(s.maxFailoverMs)})` : "no failovers");
+      this.alerts.clearIncident(inc.id);
+      this.alerts.raise({ level: "resolved", incidentId: inc.id, title: `Incident #${inc.id} resolved in ${fmtDuration(s.durationMs)}`, body: parts.join(" · ") });
+      this.alerts.setOpenIncidents(0);
+      event("incident_resolved", `Incident #${inc.id} resolved in ${fmtDuration(s.durationMs)}: ${parts.join(", ")}`);
+      this.logs.add("incident", "info", `incident #${inc.id} resolved`, [
+        ["duration", fmtDuration(s.durationMs)],
+        ["severity", inc.severity],
+        ["failovers", String(s.failovers)],
+        ["client_failed", String(s.clientFailed ?? "n/a")],
+      ]);
+      if (this.reportId === inc.id) this.renderReport();
+    }
+    this.saveIncidents();
+    this.renderIncidents();
+    this.renderStrip();
+  }
+
+  private renderStrip(): void {
+    const inc = this.tracker.active;
+    const strip = $("incident-strip");
+    strip.hidden = !inc;
+    if (!inc) return;
+    const s = this.snap;
+    $("strip-title").textContent = `Incident #${inc.id} · ${capitalize(inc.trigger)}`;
+    const sev = $("strip-sev");
+    sev.textContent = inc.severity;
+    sev.className = `sev ${inc.severity.toLowerCase()}`;
+    $("strip-elapsed").textContent = fmtDuration(Date.now() - inc.openedAt);
+    const issues = this.tracker.current;
+    $("strip-detail").textContent = issues.length
+      ? describe(issues)
+      : inc.detectedAt === undefined
+        ? "waiting for the fault to take effect…"
+        : "all clear, confirming recovery…";
+    if (s) {
+      const up = s.nodes.filter((n) => n.reachable && !n.faults?.isolated).length;
+      const frac = (s.healthy_shards + up) / (s.shards.length + s.nodes.length);
+      ($("strip-progress") as HTMLElement).style.width = `${(frac * 100).toFixed(1)}%`;
+      $("strip-progress-label").textContent = `${inc.healRequestedAt ? "healing · " : ""}${s.healthy_shards}/${s.shards.length} shards led · ${up}/${s.nodes.length} nodes connected`;
+    }
+    strip.classList.toggle("healing", !!inc.healRequestedAt);
+  }
+
+  private renderIncidents(): void {
+    const list = this.tracker.incidents;
+    const open = list.filter((i) => i.status === "open").length;
+    $("incidents-sub").textContent = list.length ? `${list.length} recorded${open ? " · 1 open" : ""} · click a row for its report` : "none yet: inject a fault to open one";
+    if (!list.length) {
+      $("incidents").innerHTML = `<tbody><tr><td class="muted empty">No incidents yet. Use the chaos lab (or press <kbd>K</kbd>) and the report appears here when the cluster heals.</td></tr></tbody>`;
+      return;
+    }
+    const rows = list
+      .map((inc) => {
+        const s = summarize(inc);
+        const status = inc.status === "open" ? `<span class="st open">● open</span>` : `<span class="st ok">resolved</span>`;
+        const avail = s.availability !== undefined ? `${(s.availability * 100).toFixed(s.availability === 1 ? 0 : 3)}%` : "—";
+        return `<tr data-incident="${inc.id}" class="${inc.status}">
+          <td class="id">#${inc.id}</td><td>${status}</td><td><span class="sev ${inc.severity.toLowerCase()}">${inc.severity}</span></td>
+          <td class="trigger">${esc(capitalize(inc.trigger))}</td>
+          <td class="mono">${new Date(inc.openedAt).toLocaleTimeString([], { hour12: false })}</td>
+          <td class="mono">${fmtDuration(s.durationMs)}</td>
+          <td class="num">${s.failovers}${s.failovers ? ` <span class="muted">${s.failoversBounded ? "≤ " : "max "}${fmtDuration(s.maxFailoverMs)}</span>` : ""}</td>
+          <td class="num ${(s.clientFailed ?? 0) > 0 ? "bad" : ""}">${s.clientFailed ?? "—"}</td>
+          <td class="num">${avail}</td>
+          <td class="actions"><button class="btn sm" data-view="${inc.id}">📄 Report</button><button class="btn sm" data-md="${inc.id}" title="Download Markdown">⬇ MD</button></td>
+        </tr>`;
+      })
+      .join("");
+    $("incidents").innerHTML = `<thead><tr><th>#</th><th>status</th><th>sev</th><th>trigger</th><th>started</th><th>duration</th><th>failovers</th><th>failed ops</th><th>availability</th><th></th></tr></thead><tbody>${rows}</tbody>`;
+  }
+
+  private find(id: number): Incident | undefined {
+    return this.tracker.incidents.find((i) => i.id === id);
+  }
+
+  private openReport(id: number): void {
+    if (!this.find(id)) return toast(`Incident #${id} is no longer recorded`, "bad");
+    this.reportId = id;
+    this.renderReport();
+    const d = $("report-dialog") as HTMLDialogElement;
+    if (!d.open) d.showModal();
+  }
+
+  private renderReport(): void {
+    const inc = this.reportId !== null ? this.find(this.reportId) : undefined;
+    if (!inc) return;
+    const body = $("report-body");
+    const scroll = body.scrollTop;
+    $("report-heading").textContent = `Incident #${inc.id} report${inc.status === "open" ? " (live)" : ""}`;
+    body.innerHTML = reportHTML(inc);
+    body.scrollTop = scroll;
+  }
+
+  private wireIncidents(): void {
+    const d = $("report-dialog") as HTMLDialogElement;
+    const current = () => (this.reportId !== null ? this.find(this.reportId) : undefined);
+    $("report-close").addEventListener("click", () => d.close());
+    d.addEventListener("close", () => (this.reportId = null));
+    d.addEventListener("click", (e) => {
+      if (e.target === d) d.close(); // backdrop
+    });
+    $("report-md").addEventListener("click", () => {
+      const inc = current();
+      if (inc) download(`distkv-incident-${inc.id}.md`, reportMarkdown(inc), "text/markdown");
+    });
+    $("report-html").addEventListener("click", () => {
+      const inc = current();
+      if (inc) download(`distkv-incident-${inc.id}.html`, reportDocument(inc), "text/html");
+    });
+    $("report-copy").addEventListener("click", async () => {
+      const inc = current();
+      if (!inc) return;
+      try {
+        await navigator.clipboard.writeText(reportMarkdown(inc));
+        toast("Report copied as Markdown", "ok");
+      } catch {
+        toast("Clipboard unavailable: use ⬇ Markdown instead", "bad");
+      }
+    });
+    $("report-print").addEventListener("click", () => {
+      const inc = current();
+      if (!inc) return;
+      // Print the standalone document from a hidden frame ("Save as PDF").
+      const f = document.createElement("iframe");
+      f.style.cssText = "position:fixed;width:0;height:0;border:0;right:0;bottom:0";
+      f.srcdoc = reportDocument(inc);
+      f.onload = () => {
+        f.contentWindow?.focus();
+        f.contentWindow?.print();
+        setTimeout(() => f.remove(), 60_000);
+      };
+      document.body.appendChild(f);
+    });
+    $("strip-report").addEventListener("click", () => {
+      if (this.tracker.active) this.openReport(this.tracker.active.id);
+    });
+    $("incidents").addEventListener("click", (e) => {
+      const t = e.target as HTMLElement;
+      const md = t.closest<HTMLElement>("[data-md]");
+      if (md) {
+        const inc = this.find(Number(md.dataset.md));
+        if (inc) download(`distkv-incident-${inc.id}.md`, reportMarkdown(inc), "text/markdown");
+        return;
+      }
+      const row = t.closest<HTMLElement>("[data-incident]");
+      if (row) this.openReport(Number(row.dataset.incident));
+    });
+    $("incidents-export").addEventListener("click", () =>
+      download(`distkv-incidents-${stamp()}.json`, JSON.stringify(this.tracker.incidents, null, 2), "application/json"),
+    );
+    $("incidents-clear").addEventListener("click", () => {
+      const keep = this.tracker.active;
+      this.tracker.incidents.length = 0;
+      if (keep) this.tracker.incidents.push(keep);
+      this.saveIncidents();
+      this.renderIncidents();
+    });
+  }
+
+  private storageKey(): string {
+    return `distkv-incidents:${this.be.mode}`;
+  }
+
+  private loadIncidents(): Incident[] {
+    try {
+      const raw = localStorage.getItem(this.storageKey());
+      return raw ? (JSON.parse(raw) as Incident[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private saveIncidents(): void {
+    this.lastSave = Date.now();
+    try {
+      localStorage.setItem(this.storageKey(), JSON.stringify(this.tracker.incidents));
+    } catch {
+      /* storage full or unavailable: incidents stay in memory */
+    }
+  }
+
+  // ---- node logs -------------------------------------------------------------------
+
+  private logNoteShown = false;
+
+  private async pollNodeLogs(): Promise<void> {
+    if (this.pollingLogs || !this.snap) return;
+    this.pollingLogs = true;
+    try {
+      const ids = this.snap.spec.members.map((m) => m.id);
+      const chunks = await Promise.all(ids.map((id) => this.be.nodeLogs(id, this.logOffsets.get(id) ?? -1)));
+      chunks.forEach((c, i) => {
+        if (!c) return;
+        this.logOffsets.set(ids[i], c.offset);
+        for (const line of c.lines) this.logs.addNodeLine(ids[i], line);
+      });
+      if (chunks.every((c) => c === null) && this.demoPolled && !this.demo?.demo && !this.logNoteShown) {
+        this.logNoteShown = true;
+        $("log-note").innerHTML =
+          "Node server logs stream here when the dashboard is served by the demo supervisor (<code>make demo</code> / <code>make docker-demo</code>). " +
+          "With Docker Compose, use <code>docker compose -f deploy/docker-compose.yml logs -f</code>.";
+      }
+    } finally {
+      this.pollingLogs = false;
+    }
+  }
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function legend(items: [string, string][]): string {

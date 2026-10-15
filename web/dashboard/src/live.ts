@@ -8,6 +8,7 @@ import type {
   HistorianStats,
   HistoryPoint,
   KVResult,
+  LogChunk,
 } from "./types";
 
 /**
@@ -88,6 +89,17 @@ export class LiveBackend implements Backend {
 
   async historianStats(): Promise<HistorianStats | null> {
     return this.historian(`/stats`);
+  }
+
+  async nodeLogs(id: string, offset: number): Promise<LogChunk | null> {
+    // Only the demo supervisor knows where node logs are.
+    if (!this.demo?.demo) return null;
+    try {
+      const r = await fetch(`${this.base}/demo/nodes/${encodeURIComponent(id)}/logs?offset=${offset}`, { cache: "no-store" });
+      return r.ok ? ((await r.json()) as LogChunk) : null;
+    } catch {
+      return null;
+    }
   }
 
   private async historian<T>(path: string): Promise<T | null> {
