@@ -41,6 +41,10 @@
   Background tabs keep tracking incidents but skip rendering and polling.
 - Dashboard assets are served gzipped (compressed once in memory: 155 KB → 48 KB on the wire) with
   ETags, so reloads are 304s. CSS is minified.
+- GitHub Pages demo: asset URLs carry a content hash (`app.js?v=…`), so a deploy takes effect at once
+  instead of pairing a stale cached `app.js` with a new page for up to 10 minutes, while unchanged
+  assets stay cached. Unknown paths redirect to the demo, Jekyll is skipped, `npm ci` is cached, and
+  the deploy runs in its own job: only that job has Pages write access, and it runs no repository code.
 - Bodies with a known `Content-Length` (Raft RPCs, KV PUTs, client responses) are read into one
   exact-size allocation instead of `io.ReadAll`'s doubling.
 - Measured and *not* adopted: multiplexing Raft RPCs per peer (with aligned heartbeats) halved

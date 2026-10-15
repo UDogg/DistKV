@@ -11,30 +11,46 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
+# One deployment at a time; a newer push supersedes a queued one but never
+# cancels a deployment in progress (that can leave Pages half-updated).
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci --prefix web/dashboard
+          cache: npm
+          cache-dependency-path: web/dashboard/package-lock.json
+      - run: npm ci --prefix web/dashboard --no-audit --no-fund
+      # Hashed asset URLs, a 404 that lands on the demo, and .nojekyll.
       - run: npm run pages --prefix web/dashboard
       - name: Add the run guide (https://<owner>.github.io/DistKV/run.html)
         run: cp docs/run.html dist-pages/run.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist-pages
+
+  # Only this job can write to Pages, and it runs no repository code.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v4
