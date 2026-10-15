@@ -36,7 +36,7 @@ jobs:
       - run: npm run pages --prefix web/dashboard
       - name: Add the run guide (https://<owner>.github.io/DistKV/run.html)
         run: cp docs/run.html dist-pages/run.html
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist-pages
 
