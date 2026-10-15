@@ -1,8 +1,19 @@
 # Changelog
 
-## Unreleased: incidents, alerts and reports
+## Unreleased: Game Day, live linearizability checking, incidents
 
 ### New
+- **Live linearizability checking** (`distkv-demo --probe`, on by default). A probe client records
+  every operation on a few keys. Barrier reads cut each key's history into epochs, and each epoch is
+  verified with the Wing & Gong checker. Writes with unknown outcomes are carried into later epochs.
+  The verdict is in `/demo/info` (`consistency`), shown as a live pill, a KPI tile and a details panel
+  (epoch timeline per key, violations with their full histories). Every incident report says how
+  many operations were verified across it, and a violation makes an incident SEV1.
+- **Game Day**: five hypothesis-driven chaos experiments (leader loss, leader partition, flaky
+  network, rolling restart, quorum loss). Each is run end to end (steady state → fault → heal →
+  recovery → verification) and judged on client errors, failover times and linearizability. A
+  scored Game Day report (A+ to F) links every incident. On a real 5-node demo: 5/5 held, A+.
+- **Chaos Monkey**: random kills, stops, partitions and packet loss until switched off.
 - **Incidents.** Every chaos action, or any unhealthy state the dashboard detects on its own (for
   example a container killed from the terminal), opens an incident. It resolves after two fully
   healthy snapshots in a row, and gets SEV1 to SEV3 from its impact.
@@ -22,6 +33,11 @@
   `/` search logs, `?` help.
 
 ### Fixed
+- Demo supervisor: a start issued right after a kill or graceful stop could be a no-op (the stop
+  changed the node's state asynchronously), or could start a second process while the first was
+  still shutting down. Stops now change state immediately and starts wait for the old process.
+- Demo supervisor: a node's exit closed the *current* log file, which after a quick restart belonged
+  to the new process.
 - `/v1/events` now sends an SSE `retry: 500` hint. When the node serving the stream dies, browsers
   reconnect in 0.5 s instead of about 3 s, so the dashboard sees the failure sooner.
 - Server logs printed the `node` attribute twice on every Raft line.

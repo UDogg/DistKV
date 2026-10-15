@@ -101,5 +101,14 @@ jobs:
           (cd clients/typescript && npm ci && npm test)
           (cd clients/rust && cargo test -- --include-ignored)
           clients/rust/target/debug/distkv-top --once --endpoints $DISTKV_ENDPOINTS
+      - name: The demo's consistency probe found the history linearizable
+        run: |
+          for i in $(seq 1 30); do
+            v=$(curl -s localhost:8080/demo/info | python3 -c 'import json,sys; c=json.load(sys.stdin)["consistency"]; print(c["verdict"], c["epochs"], c["ops_checked"])')
+            echo "$v"
+            case "$v" in violation*) exit 1;; linearizable*) [ "$(echo "$v" | cut -d" " -f2)" -ge 20 ] && exit 0;; esac
+            sleep 2
+          done
+          exit 1
       - if: failure()
         run: tail -100 /tmp/demo.log /tmp/demo/*/node.log

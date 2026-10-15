@@ -1,4 +1,4 @@
-import { summarize, type Failover, type Incident, type Sample, type Summary } from "./incidents";
+import { CONSISTENCY_GRACE_MS, summarize, type Failover, type Incident, type Sample, type Summary } from "./incidents";
 
 /**
  * Incident reports: a post-incident review generated from what the dashboard
@@ -51,6 +51,15 @@ function findings(inc: Incident, s: Summary): Finding[] {
     });
   } else {
     out.push({ ok: true, text: "No shard lost its leader." });
+  }
+  if (s.verifiedOps !== undefined) {
+    const v = s.violations ?? 0;
+    out.push({
+      ok: v === 0,
+      text: v
+        ? `Linearizability was VIOLATED: the consistency probe found ${v} non-linearizable ${v === 1 ? "history" : "histories"} (Wing & Gong checker).`
+        : `Linearizability held: the consistency probe verified ${s.verifiedOps.toLocaleString()} operations with the Wing & Gong checker${s.verifying ? " so far (still verifying epochs that span the incident)" : `, from the start of the incident until ${CONSISTENCY_GRACE_MS / 1000} s after it resolved`}. No stale reads, lost writes or reordering.`,
+    });
   }
   if (inc.quorumLost.length) {
     out.push({ ok: false, text: `Shard${inc.quorumLost.length === 1 ? "" : "s"} ${inc.quorumLost.join(", ")} lost quorum: a majority of replicas was unreachable, so writes there could not commit.` });
@@ -180,6 +189,7 @@ export function reportHTML(inc: Incident): string {
     <div class="rpt-kicker">DistKV incident report · #${inc.id}${inc.mode === "sim" ? " · simulation" : ""}</div>
     <h1>${esc(capitalize(inc.title))}</h1>
     <div class="rpt-meta">${status}<span class="rpt-badge ${inc.severity.toLowerCase()}">${inc.severity}</span>
+      ${s.verifiedOps !== undefined ? (s.violations ? `<span class="rpt-badge bad">✗ NOT LINEARIZABLE</span>` : `<span class="rpt-badge ok">✓ LINEARIZABLE${s.verifying ? " (verifying)" : ""}</span>`) : ""}
       <span>${esc(SEV_TEXT[inc.severity])}</span></div>
     <div class="rpt-meta muted">${fmtDate(inc.openedAt)} → ${inc.resolvedAt ? fmtTime(inc.resolvedAt) : "ongoing"}</div>
   </header>
@@ -214,6 +224,7 @@ export function reportHTML(inc: Incident): string {
       <tr><th>Leader changes</th><td>${inc.leaderChanges}</td></tr>
       <tr><th>Throughput dip</th><td>${s.dipPercent.toFixed(0)}% below baseline at the worst second</td></tr>
       <tr><th>Server errors</th><td>${s.serverErrors}</td></tr>
+      ${s.verifiedOps !== undefined ? `<tr><th>Operations verified linearizable</th><td>${s.verifiedOps.toLocaleString()}${s.violations ? ` · <b style="color:var(--rpt-bad)">${s.violations} violation(s)</b>` : ""}</td></tr>` : ""}
       ${s.detectMs !== undefined && inc.triggerKind === "action" ? `<tr><th>Time to detect</th><td>${fmtDuration(s.detectMs)}</td></tr>` : ""}
       ${s.recoverAfterHealMs !== undefined ? `<tr><th>Recovery after heal</th><td>${fmtDuration(s.recoverAfterHealMs)}</td></tr>` : ""}
     </table>
@@ -276,7 +287,7 @@ export const REPORT_CSS = `
 .rpt-kicker { font-size: 11px; text-transform: uppercase; letter-spacing: 1.4px; color: var(--rpt-muted); font-weight: 700; }
 .rpt-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; font-size: 13px; }
 .rpt-badge { font-size: 11px; font-weight: 800; letter-spacing: .8px; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
-.rpt-badge.ok { color: var(--rpt-ok); } .rpt-badge.open { color: var(--rpt-bad); }
+.rpt-badge.ok { color: var(--rpt-ok); } .rpt-badge.open, .rpt-badge.bad { color: var(--rpt-bad); }
 .rpt-badge.sev1 { color: #fff; background: var(--rpt-bad); border-color: var(--rpt-bad); }
 .rpt-badge.sev2 { color: #fff; background: var(--rpt-warn); border-color: var(--rpt-warn); }
 .rpt-badge.sev3 { color: #fff; background: #5c6bd6; border-color: #5c6bd6; }
@@ -319,6 +330,7 @@ export function reportMarkdown(inc: Incident): string {
   L.push(`| Trigger | ${inc.trigger} (${inc.triggerKind === "action" ? "chaos lab" : "detected"}) |`);
   L.push(`| Client availability | ${s.availability !== undefined ? pct(s.availability) : "n/a"} |`);
   L.push(`| Failed client ops | ${s.clientFailed ?? "n/a"} |`);
+  if (s.verifiedOps !== undefined) L.push(`| Linearizability | ${s.violations ? `❌ ${s.violations} violation(s)` : `✅ ${s.verifiedOps.toLocaleString()} ops verified`} |`);
   L.push(`| Shard failovers | ${s.failovers}${s.failovers ? ` (slowest ${fmtDuration(s.maxFailoverMs)}, median ${fmtDuration(s.medianFailoverMs)})` : ""} |`);
   L.push(`| Lowest healthy shards | ${s.minHealthy} / ${s.total} |`);
   L.push(`| Lowest nodes up | ${s.minUp} / ${s.nodes} |`);

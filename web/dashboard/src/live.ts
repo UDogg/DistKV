@@ -40,6 +40,12 @@ export class LiveBackend implements Backend {
     try {
       const r = await fetch(`${this.base}/demo/info`, { cache: "no-store" });
       this.demo = r.ok ? await r.json() : null;
+      // Older supervisors encoded empty lists as null.
+      const c = this.demo?.consistency;
+      if (c) {
+        c.violations ??= [];
+        c.recent ??= [];
+      }
     } catch {
       this.demo = null;
     }

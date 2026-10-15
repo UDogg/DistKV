@@ -12,6 +12,7 @@ import type {
   KVResult,
   LogChunk,
   ProcState,
+  EpochView,
 } from "./types";
 
 /**
@@ -58,6 +59,15 @@ export class SimBackend implements Backend {
   private readonly hist: HistoryPoint[] = [];
   private okTotal = 0;
   private failedTotal = 0;
+  // A model of the demo's consistency probe: 6 keys, epochs every 2 s; a
+  // key's epoch only closes while its shard has a leader.
+  private readonly probeKeys = Array.from({ length: 6 }, (_, i) => `__probe/k${i}`);
+  private readonly probeOpen = new Map<string, { since: number; ops: number }>();
+  private probeChecked = 0;
+  private probeEpochs = 0;
+  private probeLast = 0;
+  private lastProbeTick = Date.now();
+  private readonly probeRecent: EpochView[] = [];
   // Per-node log lines in the real server's logfmt format; base is the
   // offset of lines[0], so clients can resume like with the real endpoint.
   private readonly logs = new Map<string, { base: number; lines: string[] }>();
@@ -124,7 +134,8 @@ export class SimBackend implements Backend {
       const sh = this.shards[s];
       const reps = this.topo.replicas(s).map((id) => this.node(id));
       const live = reps.filter((n) => this.connected(n));
-      const leaderOk = sh.leader !== "" && this.connected(this.node(sh.leader));
+      // Check-quorum: a leader that can't reach a majority steps down.
+      const leaderOk = sh.leader !== "" && this.connected(this.node(sh.leader)) && live.length >= 2;
       if (!leaderOk && sh.leader !== "") {
         const old = this.node(sh.leader);
         if (this.up(old)) this.log(old.id, "WARN", "leader lost contact with quorum; stepping down", { shard: s, term: sh.term });
@@ -233,7 +244,28 @@ export class SimBackend implements Backend {
     return status;
   }
 
+  private stepProbe(now: number): void {
+    const dt = (now - this.lastProbeTick) / 1000;
+    this.lastProbeTick = now;
+    for (const k of this.probeKeys) {
+      const o = this.probeOpen.get(k) ?? { since: now, ops: 0 };
+      const sh = this.shards[this.topo.shardForKey(k)];
+      if (sh.leader) o.ops += (120 / this.probeKeys.length) * dt;
+      this.probeOpen.set(k, o);
+      if (now - o.since >= 2000 && sh.leader) {
+        const ops = Math.round(o.ops);
+        this.probeChecked += ops;
+        this.probeEpochs++;
+        this.probeLast = now;
+        this.probeRecent.push({ key: k, start: o.since, end: now, ops, ok: true });
+        if (this.probeRecent.length > 300) this.probeRecent.shift();
+        this.probeOpen.set(k, { since: now, ops: 0 });
+      }
+    }
+  }
+
   async demoInfo(): Promise<DemoInfo> {
+    this.stepProbe(Date.now());
     return {
       demo: true,
       historian: true,
@@ -244,6 +276,20 @@ export class SimBackend implements Backend {
         availability: this.okTotal / Math.max(1, this.okTotal + this.failedTotal),
         availability_60s: 1,
         last_second: { ok: this.rate, failed: 0, p99_ms: 0 },
+      },
+      consistency: {
+        enabled: true,
+        verdict: this.probeEpochs ? "linearizable" : "pending",
+        ops_checked: this.probeChecked,
+        ops_pending: Math.round([...this.probeOpen.values()].reduce((a, o) => a + o.ops, 0)),
+        epochs: this.probeEpochs,
+        indeterminate: 0,
+        inconclusive: 0,
+        keys: this.probeKeys.length,
+        last_check: this.probeLast,
+        violations: [],
+        violations_total: 0,
+        recent: [...this.probeRecent],
       },
       rate: this.rate,
       read_ratio: this.readRatio,

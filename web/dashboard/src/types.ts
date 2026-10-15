@@ -76,6 +76,49 @@ export interface DemoInfo {
   historian: boolean;
   shards: number;
   client?: ClientReport;
+  /** Live linearizability verdict from the demo's consistency probe. */
+  consistency?: ConsistencyReport;
+}
+
+export interface EpochView {
+  key: string;
+  start: number;
+  end: number;
+  ops: number;
+  ok: boolean;
+}
+
+export interface OpView {
+  client: number;
+  kind: "get" | "put" | "delete";
+  value?: string;
+  found: boolean;
+  unknown?: boolean;
+  call: number;
+  return?: number;
+}
+
+export interface Violation {
+  time: number;
+  key: string;
+  ops: OpView[];
+  error: string;
+}
+
+/** Jepsen-style continuous linearizability checking (cmd/distkv-demo/probe.go). */
+export interface ConsistencyReport {
+  enabled: boolean;
+  verdict: "pending" | "linearizable" | "violation";
+  ops_checked: number;
+  ops_pending: number;
+  epochs: number;
+  indeterminate: number;
+  inconclusive: number;
+  keys: number;
+  last_check: number;
+  violations: Violation[];
+  violations_total: number;
+  recent: EpochView[];
 }
 
 /** What the demo's traffic generator (a real retrying client) experienced. */

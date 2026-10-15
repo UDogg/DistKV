@@ -1,13 +1,14 @@
 import { Topology } from "../../../clients/typescript/src/routing";
 import { AlertCenter } from "./alerts";
 import { TimeSeriesChart } from "./charts";
-import { describe, IncidentTracker, summarize, type Incident, type Transition } from "./incidents";
+import { EXPERIMENTS, GAMEDAY_CSS, gameDayDocument, gameDayHTML, gameDayMarkdown, score, type ExperimentCtx, type GameDayRun } from "./gameday";
+import { CONSISTENCY_GRACE_MS, describe, IncidentTracker, summarize, type Incident, type Transition } from "./incidents";
 import { LiveBackend } from "./live";
 import { LogConsole, type Level } from "./logs";
 import { fmtDuration, REPORT_CSS, reportDocument, reportHTML, reportMarkdown } from "./report";
 import { RingView } from "./ring";
 import { SimBackend } from "./sim";
-import type { Backend, ClusterStatus, ConnState, DemoInfo, HistorianEvent, NodeSummary } from "./types";
+import type { Backend, ClusterStatus, ConnState, ConsistencyReport, DemoInfo, HistorianEvent, NodeSummary } from "./types";
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -104,6 +105,7 @@ const EVENT_STYLE: Record<string, [string, string]> = {
   shard_unavailable: ["⛔", "bad"],
   shard_recovered: ["✅", "ok"],
   quorum_lost: ["🛑", "bad"],
+  violation: ["🧬", "bad"],
   action: ["🧪", ""],
   incident_open: ["🚨", "bad incident"],
   incident_escalated: ["⚠️", "warn incident"],
@@ -112,7 +114,7 @@ const EVENT_STYLE: Record<string, [string, string]> = {
 
 const EVENT_FILTERS: Record<string, (kind: string) => boolean> = {
   all: () => true,
-  faults: (k) => ["node_down", "node_up", "partitioned", "healed", "shard_unavailable", "shard_recovered", "quorum_lost"].includes(k),
+  faults: (k) => ["node_down", "node_up", "partitioned", "healed", "shard_unavailable", "shard_recovered", "quorum_lost", "violation"].includes(k),
   leaders: (k) => ["leader_change", "election", "shard_recovered", "shard_unavailable"].includes(k),
   you: (k) => k === "action",
   incidents: (k) => k.startsWith("incident_"),
@@ -163,10 +165,16 @@ class App {
   private lastClientFailed: number | null = null;
   private lastSave = 0;
   private locateTimer: ReturnType<typeof setTimeout> | undefined;
+  private gd: GameDayRun | null = null;
+  private gdRunning = false;
+  private gdCancel = false;
+  private readonly gdSelected = new Set(EXPERIMENTS.map((e) => e.id));
+  private monkey = false;
+  private reportGameDay = false;
 
   constructor(private readonly be: Backend) {
     const style = document.createElement("style");
-    style.textContent = REPORT_CSS;
+    style.textContent = REPORT_CSS + GAMEDAY_CSS;
     document.head.appendChild(style);
     this.alerts = new AlertCenter(
       $("alert-stack"),
@@ -217,6 +225,9 @@ class App {
     setInterval(() => this.pollHistory(), 10_000);
     this.wireControls();
     this.wireIncidents();
+    this.wireGameDay();
+    this.gd = this.loadGameDay();
+    this.renderGameDay();
   }
 
   private onConn(c: ConnState): void {
@@ -373,7 +384,29 @@ class App {
       kpi("Shards", `${s.healthy_shards}<small>/ ${s.shards.length}</small>`, "with an elected leader", s.healthy_shards === s.shards.length ? "good" : "bad"),
       kpi("Nodes", `${up}<small>/ ${s.nodes.length}</small>`, `RF=${s.spec.replication_factor} · tolerates ${Math.floor((s.spec.replication_factor - 1) / 2)} failure`, up === s.nodes.length ? "good" : "warn"),
       kpi("Leader moves", String(this.leaderChanges.length), "last 5 minutes", "", "rgba(255,92,168,.25)"),
+      this.consistencyKPI(kpi),
     ].join("");
+  }
+
+  private consistencyKPI(kpi: (label: string, value: string, sub: string, cls?: string, glow?: string) => string): string {
+    const c = this.demo?.consistency;
+    const tile = (html: string) => html.replace('<div class="kpi', '<div data-open="consistency" title="Click for details" class="kpi clickable');
+    if (!c) {
+      const sub = this.demo === null && this.demoPolled ? "the probe runs with make demo" : "waiting for the probe…";
+      return tile(kpi("Linearizability", "—", sub));
+    }
+    if (c.verdict === "violation") return tile(kpi("Linearizability", "✗ <small>violated</small>", `${c.violations_total} non-linearizable histor${c.violations_total === 1 ? "y" : "ies"}`, "bad", "rgba(255,92,122,.35)"));
+    if (c.verdict === "pending") return tile(kpi("Linearizability", "…", "first epochs being checked"));
+    const ago = c.last_check ? Math.max(0, (Date.now() - c.last_check) / 1000) : 0;
+    return tile(
+      kpi(
+        "Linearizable",
+        `✓ ${fmtNum(c.ops_checked)}<small>ops</small>`,
+        `${c.epochs.toLocaleString()} epochs checked${this.be.mode === "sim" ? " (simulated)" : ""} · ${ago < 5 ? "live" : `${ago.toFixed(0)}s ago`}`,
+        "good",
+        "rgba(46,229,157,.3)",
+      ),
+    );
   }
 
   private renderNodes(s: ClusterStatus): void {
@@ -511,7 +544,9 @@ class App {
     const isDemo = !!this.demo?.demo;
     $("mode-pill").hidden = !isDemo;
     $("control-card").hidden = !isDemo;
+    $("gameday-card").hidden = !isDemo;
     document.querySelector<HTMLElement>("#incident-strip [data-scenario]")!.hidden = !isDemo;
+    this.onConsistency(this.demo?.consistency);
     const c = this.demo?.client;
     if (c) {
       if (this.lastClientFailed !== null && c.failed_total > this.lastClientFailed) {
@@ -537,6 +572,107 @@ class App {
       $("rate-out").textContent = String(this.demo!.rate);
       $("ratio-out").textContent = String(Math.round(this.demo!.read_ratio * 100));
     }
+  }
+
+  private lastViolations: number | null = null;
+  private lastConsistencyLog = 0;
+
+  private onConsistency(c: ConsistencyReport | undefined): void {
+    const pill = $("consistency-pill");
+    pill.hidden = !c;
+    if (!c) return;
+    pill.className = `pill pill-btn ${c.verdict === "violation" ? "pill-bad" : c.verdict === "linearizable" ? "pill-ok" : "pill-muted"}`;
+    pill.textContent = c.verdict === "violation" ? "✗ NOT LINEARIZABLE" : c.verdict === "linearizable" ? `✓ LINEARIZABLE · ${fmtNum(c.ops_checked)} ops` : "CHECKING…";
+    if (this.lastViolations !== null && c.violations_total > this.lastViolations) {
+      const v = c.violations.at(-1);
+      this.alerts.raise({
+        level: "critical",
+        incidentId: this.tracker.active?.id,
+        title: "Consistency violation detected",
+        body: `The history of ${v?.key ?? "a probe key"} is not linearizable (${v?.ops.length ?? 0} operations). Open the consistency panel for the operations.`,
+      });
+      this.events.unshift({ ts: Date.now(), kind: "violation", detail: `consistency violation on ${v?.key ?? "?"}: history not linearizable` });
+      this.logs.add("consistency", "error", "history is NOT linearizable", [["key", v?.key ?? "?"], ["ops", String(v?.ops.length ?? 0)]]);
+      this.renderEvents();
+    }
+    this.lastViolations = c.violations_total;
+    if (Date.now() - this.lastConsistencyLog >= 10_000 && c.epochs > 0) {
+      this.lastConsistencyLog = Date.now();
+      this.logs.add("consistency", c.verdict === "violation" ? "error" : "info", `verdict ${c.verdict}`, [
+        ["ops_checked", String(c.ops_checked)],
+        ["epochs", String(c.epochs)],
+        ["pending", String(c.ops_pending)],
+        ["indeterminate", String(c.indeterminate)],
+      ]);
+    }
+    if (($("consistency-dialog") as HTMLDialogElement).open) this.renderConsistency();
+  }
+
+  private renderConsistency(): void {
+    const c = this.demo?.consistency;
+    const body = $("consistency-body");
+    if (!c) {
+      body.innerHTML = `<p class="muted">The consistency probe runs inside the demo supervisor (<code>make demo</code> / <code>make docker-demo</code>), and in the Pages simulation.</p>`;
+      return;
+    }
+    const sim = this.be.mode === "sim";
+    const verdict =
+      c.verdict === "violation"
+        ? `<div class="verdict bad">✗ Not linearizable</div>`
+        : c.verdict === "linearizable"
+          ? `<div class="verdict ok">✓ Linearizable</div>`
+          : `<div class="verdict">Checking the first epochs…</div>`;
+    const stat = (v: string, l: string, cls = "") => `<div class="cstat ${cls}"><b>${v}</b><span>${l}</span></div>`;
+    // Epoch timeline: one row per key over the last 90 s; outages show up as
+    // long epochs (a key's epoch can only close while its shard has a leader).
+    const now = Date.now();
+    const span = 90_000;
+    const x = (t: number) => Math.max(0, Math.min(100, ((t - (now - span)) / span) * 100));
+    const keys = [...new Set(c.recent.map((e) => e.key))].sort();
+    const incidents = this.tracker.incidents.filter((i) => (i.resolvedAt ?? now) > now - span);
+    const shade = incidents
+      .map((i) => `<b class="ewin" style="left:${x(i.openedAt)}%;width:${Math.max(0.5, x(i.resolvedAt ?? now) - x(i.openedAt))}%" title="Incident #${i.id}"></b>`)
+      .join("");
+    const rows = keys
+      .map((k) => {
+        const cells = c.recent
+          .filter((e) => e.key === k && e.end > now - span)
+          .map((e) => {
+            const l = x(e.start);
+            const w = Math.max(0.4, x(e.end) - l);
+            return `<i class="${e.ok ? "ok" : "bad"}${e.end - e.start > 4000 ? " long" : ""}" style="left:${l}%;width:${w}%" title="${new Date(e.start).toLocaleTimeString([], { hour12: false })}–${new Date(e.end).toLocaleTimeString([], { hour12: false })} · ${e.ops} ops · ${e.ok ? "linearizable" : "VIOLATION"}"></i>`;
+          })
+          .join("");
+        return `<div class="erow"><span>${esc(k.replace("__probe/", ""))}</span><div class="etrack">${shade}${cells}</div></div>`;
+      })
+      .join("");
+    const viol = c.violations.length
+      ? c.violations
+          .slice()
+          .reverse()
+          .map(
+            (v) => `<details class="viol" open><summary>✗ ${esc(v.key)} at ${new Date(v.time).toLocaleTimeString([], { hour12: false })}: ${esc(v.error)}</summary>
+            <table><tr><th>client</th><th>op</th><th>value</th><th>call</th><th>return</th></tr>
+            ${v.ops.map((o) => `<tr><td>${o.client < 0 ? "barrier" : `w${o.client}`}</td><td>${o.kind}${o.unknown ? " (indeterminate)" : ""}</td><td>${o.kind === "delete" ? (o.found ? "deleted" : "absent") : o.kind === "get" && !o.found ? "absent" : esc(o.value ?? "")}</td><td>${new Date(o.call).toISOString().slice(17, 23)}</td><td>${o.return ? new Date(o.return).toISOString().slice(17, 23) : "—"}</td></tr>`).join("")}
+            </table></details>`,
+          )
+          .join("")
+      : `<p class="muted small">No violations. If one is ever found, the offending history (every operation with its invocation and response time) appears here.</p>`;
+    body.innerHTML = `
+      ${verdict}
+      <p>${sim ? "<b>Simulated in this Pages demo.</b> With <code>make demo</code> this is real: " : ""}A probe client runs 4 workers that read, write and delete ${c.keys} keys (about 120 ops/s) through the real client, recording every operation's invocation and response time. Every 2 s the workers pause and one solo read per key pins its state, which closes that key's <b>epoch</b>. The epoch's history is then checked with the <b>Wing &amp; Gong</b> algorithm with Lowe's memoisation (as in Porcupine and Jepsen). Writes whose outcome the client never learned count as possibly applied at any later point, or never.</p>
+      <div class="cstats">
+        ${stat(c.ops_checked.toLocaleString(), "operations verified", c.verdict === "violation" ? "" : "good")}
+        ${stat(c.epochs.toLocaleString(), "epochs checked")}
+        ${stat(c.ops_pending.toLocaleString(), "awaiting an epoch close")}
+        ${stat(c.indeterminate.toLocaleString(), "indeterminate writes")}
+        ${stat(c.inconclusive.toLocaleString(), "inconclusive checks")}
+        ${stat(c.violations_total.toLocaleString(), "violations", c.violations_total ? "bad" : "good")}
+      </div>
+      <h4>Epochs, last 90 seconds <small>one row per key · red bands: incidents · long bars: keys whose shard had no leader</small></h4>
+      <div class="epochs">${rows || `<p class="muted small">No epochs yet.</p>`}</div>
+      <h4>Violations</h4>
+      ${viol}`;
   }
 
   private historyEventsLoaded = false;
@@ -667,11 +803,23 @@ class App {
         break;
       }
       case "heal": {
-        for (const n of s.nodes) {
-          if (!n.reachable) await this.be.nodeAction(n.id, "start");
-          else if (n.faults && (n.faults.isolated || n.faults.drop_percent || n.faults.delay_ms))
-            await this.be.setFaults(n.id, { isolated: false, drop_percent: 0, delay_ms: 0 });
-        }
+        // The snapshot can be a second old (a fault injected just now may not
+        // show yet), so use the supervisor's process states, which change
+        // immediately, and clear faults on every node that is up.
+        await this.pollDemo();
+        const procs = new Map((this.demo?.nodes ?? []).map((p) => [p.id, p.state] as [string, string]));
+        await Promise.all(
+          s.spec.members.map(async ({ id }) => {
+            const node = this.snap?.nodes.find((n) => n.id === id);
+            const state = procs.get(id);
+            try {
+              if (state ? state !== "running" : !node?.reachable) await this.be.nodeAction(id, "start");
+              else await this.be.setFaults(id, { isolated: false, drop_percent: 0, delay_ms: 0 });
+            } catch (e) {
+              this.logs.add("chaos", "warn", `heal of ${id} failed: ${e}`);
+            }
+          }),
+        );
         this.logAction("you: healed everything", "info");
         this.tracker.action("heal", "heal everything", this.demo);
         this.healAlert("Heal everything: restarting stopped nodes and clearing network faults");
@@ -828,12 +976,27 @@ class App {
           break;
         }
         case "a": case "A": $("alert-bell").click(); break;
+        case "g": case "G": if (chaos) this.runGameDay(); break;
+        case "m": case "M": if (chaos) this.toggleMonkey(); break;
+        case "c": case "C": $("consistency-pill").hidden ? toast("No consistency probe in this mode") : $("consistency-pill").click(); break;
         case "/": e.preventDefault(); $("log-search").focus(); $("logs-card").scrollIntoView({ behavior: "smooth", block: "center" }); break;
         case "?": ($("shortcuts-dialog") as HTMLDialogElement).showModal(); break;
         default: return;
       }
     });
     $("shortcuts-btn").addEventListener("click", () => ($("shortcuts-dialog") as HTMLDialogElement).showModal());
+    const openConsistency = () => {
+      this.renderConsistency();
+      ($("consistency-dialog") as HTMLDialogElement).showModal();
+    };
+    $("consistency-pill").addEventListener("click", openConsistency);
+    $("kpis").addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).closest("[data-open='consistency']")) openConsistency();
+    });
+    $("consistency-close").addEventListener("click", () => ($("consistency-dialog") as HTMLDialogElement).close());
+    $("consistency-dialog").addEventListener("click", (e) => {
+      if (e.target === $("consistency-dialog")) ($("consistency-dialog") as HTMLDialogElement).close();
+    });
   }
 
   // ---- incidents, alerts and reports ---------------------------------------------
@@ -939,16 +1102,33 @@ class App {
 
   private openReport(id: number): void {
     if (!this.find(id)) return toast(`Incident #${id} is no longer recorded`, "bad");
+    this.reportGameDay = false;
     this.reportId = id;
     this.renderReport();
     const d = $("report-dialog") as HTMLDialogElement;
     if (!d.open) d.showModal();
   }
 
+  private openGameDayReport(): void {
+    if (!this.gd) return toast("No Game Day has run yet");
+    this.reportGameDay = true;
+    this.reportId = null;
+    this.renderReport();
+    const d = $("report-dialog") as HTMLDialogElement;
+    if (!d.open) d.showModal();
+  }
+
   private renderReport(): void {
+    const body = $("report-body");
+    if (this.reportGameDay && this.gd) {
+      const scroll = body.scrollTop;
+      $("report-heading").textContent = `Game Day report${this.gdRunning ? " (live)" : ""}`;
+      body.innerHTML = gameDayHTML(this.gd, this.tracker.incidents);
+      body.scrollTop = scroll;
+      return;
+    }
     const inc = this.reportId !== null ? this.find(this.reportId) : undefined;
     if (!inc) return;
-    const body = $("report-body");
     const scroll = body.scrollTop;
     $("report-heading").textContent = `Incident #${inc.id} report${inc.status === "open" ? " (live)" : ""}`;
     body.innerHTML = reportHTML(inc);
@@ -959,23 +1139,36 @@ class App {
     const d = $("report-dialog") as HTMLDialogElement;
     const current = () => (this.reportId !== null ? this.find(this.reportId) : undefined);
     $("report-close").addEventListener("click", () => d.close());
-    d.addEventListener("close", () => (this.reportId = null));
+    d.addEventListener("close", () => {
+      this.reportId = null;
+      this.reportGameDay = false;
+    });
+    // Links between reports (a Game Day report links its incidents).
+    $("report-body").addEventListener("click", (e) => {
+      const a = (e.target as HTMLElement).closest<HTMLElement>("[data-report]");
+      if (!a) return;
+      e.preventDefault();
+      this.openReport(Number(a.dataset.report));
+    });
     d.addEventListener("click", (e) => {
       if (e.target === d) d.close(); // backdrop
     });
     $("report-md").addEventListener("click", () => {
+      if (this.reportGameDay && this.gd) return download(`distkv-gameday-${stamp()}.md`, gameDayMarkdown(this.gd, this.tracker.incidents), "text/markdown");
       const inc = current();
       if (inc) download(`distkv-incident-${inc.id}.md`, reportMarkdown(inc), "text/markdown");
     });
     $("report-html").addEventListener("click", () => {
+      if (this.reportGameDay && this.gd) return download(`distkv-gameday-${stamp()}.html`, gameDayDocument(this.gd, this.tracker.incidents), "text/html");
       const inc = current();
       if (inc) download(`distkv-incident-${inc.id}.html`, reportDocument(inc), "text/html");
     });
     $("report-copy").addEventListener("click", async () => {
       const inc = current();
-      if (!inc) return;
+      const md = this.reportGameDay && this.gd ? gameDayMarkdown(this.gd, this.tracker.incidents) : inc ? reportMarkdown(inc) : null;
+      if (!md) return;
       try {
-        await navigator.clipboard.writeText(reportMarkdown(inc));
+        await navigator.clipboard.writeText(md);
         toast("Report copied as Markdown", "ok");
       } catch {
         toast("Clipboard unavailable: use ⬇ Markdown instead", "bad");
@@ -983,11 +1176,12 @@ class App {
     });
     $("report-print").addEventListener("click", () => {
       const inc = current();
-      if (!inc) return;
+      const doc = this.reportGameDay && this.gd ? gameDayDocument(this.gd, this.tracker.incidents) : inc ? reportDocument(inc) : null;
+      if (!doc) return;
       // Print the standalone document from a hidden frame ("Save as PDF").
       const f = document.createElement("iframe");
       f.style.cssText = "position:fixed;width:0;height:0;border:0;right:0;bottom:0";
-      f.srcdoc = reportDocument(inc);
+      f.srcdoc = doc;
       f.onload = () => {
         f.contentWindow?.focus();
         f.contentWindow?.print();
@@ -1040,6 +1234,281 @@ class App {
       localStorage.setItem(this.storageKey(), JSON.stringify(this.tracker.incidents));
     } catch {
       /* storage full or unavailable: incidents stay in memory */
+    }
+  }
+
+  // ---- Game Day and Chaos Monkey ---------------------------------------------------
+
+  private steady(): boolean {
+    const s = this.snap;
+    return (
+      !!s &&
+      !this.tracker.active &&
+      s.healthy_shards === s.shards.length &&
+      s.nodes.every((n) => n.reachable && !n.faults?.isolated && !n.faults?.drop_percent && !n.faults?.delay_ms)
+    );
+  }
+
+  /** Sleeps in small steps so a Stop takes effect promptly. */
+  private async pause(ms: number, cancelled: () => boolean): Promise<void> {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      if (cancelled()) throw new Error("cancelled");
+      await sleep(Math.min(250, end - Date.now()));
+    }
+  }
+
+  private async waitUntil(pred: () => boolean, ms: number, cancelled: () => boolean): Promise<boolean> {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      if (pred()) return true;
+      if (cancelled()) throw new Error("cancelled");
+      await sleep(250);
+    }
+    return pred();
+  }
+
+  private async ensureSteady(cancelled: () => boolean, step: (t: string) => void): Promise<void> {
+    step("waiting for a steady state");
+    if (await this.waitUntil(() => this.steady(), 20_000, cancelled)) return;
+    step("healing to reach a steady state");
+    await this.scenario("heal");
+    if (!(await this.waitUntil(() => this.steady(), 30_000, cancelled))) throw new Error("the cluster never reached a steady state");
+  }
+
+  private gdStep(text: string, frac?: number): void {
+    $("gd-step").textContent = text;
+    if (frac !== undefined) ($("gd-bar") as HTMLElement).style.width = `${(frac * 100).toFixed(1)}%`;
+  }
+
+  private async runGameDay(): Promise<void> {
+    if (this.gdRunning) return;
+    const ids = EXPERIMENTS.filter((e) => this.gdSelected.has(e.id)).map((e) => e.id);
+    if (!ids.length) return toast("Select at least one experiment", "bad");
+    if (this.monkey) this.toggleMonkey();
+    this.gdRunning = true;
+    this.gdCancel = false;
+    const cancelled = () => this.gdCancel;
+    const cons0 = this.demo?.consistency;
+    const run: GameDayRun = {
+      startedAt: Date.now(),
+      mode: this.be.mode,
+      results: ids.map((id) => ({ id, state: "queued", startedAt: 0, checks: [], notes: [] })),
+    };
+    this.gd = run;
+    const total = EXPERIMENTS.filter((e) => ids.includes(e.id)).reduce((a, e) => a + e.seconds + 10, 0);
+    let elapsedEst = 0;
+    this.alerts.raise({ level: "info", title: "Game Day started", body: `${ids.length} experiment${ids.length === 1 ? "" : "s"}, about ${Math.max(1, Math.round(total / 60))} min. Each one is verified automatically.` });
+    this.logs.add("gameday", "info", "game day started", [["experiments", ids.join(",")]]);
+    this.renderGameDay();
+    for (const r of run.results) {
+      const e = EXPERIMENTS.find((x) => x.id === r.id)!;
+      if (this.gdCancel) {
+        r.state = "aborted";
+        r.error = "not run: Game Day stopped";
+        continue;
+      }
+      r.state = "running";
+      r.startedAt = Date.now();
+      this.renderGameDay();
+      const step = (t: string) => this.gdStep(`${e.icon} ${e.name}: ${t}`, Math.min(0.99, (elapsedEst + (Date.now() - r.startedAt) / 1000) / total));
+      const ctx: ExperimentCtx = {
+        snap: () => this.snap,
+        act: (node, act, why) => this.act(node, act, { why }),
+        loss: async (node, pct, delay) => {
+          await this.be.setFaults(node, { isolated: false, drop_percent: pct, delay_ms: delay });
+          const text = `${pct}% packet loss + ${delay} ms delay on ${node}`;
+          this.logAction(`you: ${text}`);
+          this.tracker.action("chaos", text, this.demo);
+        },
+        scenario: (name) => this.scenario(name),
+        wait: async (ms, what) => {
+          const end = Date.now() + ms;
+          while (Date.now() < end) {
+            step(`${what} (${Math.ceil((end - Date.now()) / 1000)} s)`);
+            await this.pause(Math.min(500, end - Date.now()), cancelled);
+          }
+        },
+        step,
+      };
+      try {
+        await this.ensureSteady(cancelled, step);
+        const before = Math.max(0, ...this.tracker.incidents.map((i) => i.id));
+        step("injecting the fault");
+        r.notes = await e.run(ctx);
+        step("healing");
+        await this.scenario("heal");
+        step("waiting for recovery");
+        await this.waitUntil(() => !this.tracker.active, 45_000, cancelled);
+        step("verifying linearizability of the epochs that span the fault");
+        await this.pause(CONSISTENCY_GRACE_MS + 800, cancelled);
+        const inc = this.tracker.incidents.filter((i) => i.id > before).sort((a, b) => a.id - b.id)[0];
+        if (!inc) {
+          r.checks = [{ name: "the fault had an effect", ok: false, detail: "no incident was observed" }];
+        } else {
+          r.incidentId = inc.id;
+          r.checks = e.verify(inc, summarize(inc), r.notes);
+        }
+        r.state = r.checks.filter((c) => !c.info).every((c) => c.ok) ? "pass" : "fail";
+      } catch (err) {
+        r.state = "aborted";
+        r.error = String(err).replace(/^Error: /, "");
+        if (this.gdCancel) await this.scenario("heal");
+      }
+      r.endedAt = Date.now();
+      elapsedEst += e.seconds + 10;
+      const failing = r.checks.filter((c) => !c.ok && !c.info).map((c) => c.name);
+      if (r.state === "pass") this.alerts.raise({ level: "resolved", incidentId: r.incidentId, title: `Hypothesis held: ${e.name}`, body: r.checks.filter((c) => !c.info).map((c) => `✓ ${c.name}`).join(" · ") });
+      else if (r.state === "fail") this.alerts.raise({ level: "warning", incidentId: r.incidentId, title: `Hypothesis rejected: ${e.name}`, body: `Failed: ${failing.join(", ")}` });
+      this.logs.add("gameday", r.state === "pass" ? "info" : r.state === "fail" ? "error" : "warn", `experiment ${r.state}: ${e.name}`, [
+        ["incident", String(r.incidentId ?? "—")],
+        ...r.checks.map((c) => [c.name.split(" ").join("_"), c.ok ? "ok" : "FAIL"] as [string, string]),
+      ]);
+      this.renderGameDay();
+    }
+    run.endedAt = Date.now();
+    run.cancelled = this.gdCancel;
+    const cons1 = this.demo?.consistency;
+    if (cons0 && cons1) {
+      run.verifiedOps = cons1.ops_checked - cons0.ops_checked;
+      run.violations = cons1.violations_total - cons0.violations_total;
+    }
+    this.gdRunning = false;
+    const sc = score(run);
+    this.alerts.raise({
+      level: sc.passed === sc.total ? "resolved" : "warning",
+      title: `Game Day complete: grade ${sc.grade}`,
+      body: `${sc.passed} of ${sc.total} hypotheses held · ${sc.pct.toFixed(0)}% of checks passed${run.verifiedOps !== undefined ? ` · ${run.verifiedOps.toLocaleString()} ops verified linearizable` : ""}`,
+    });
+    this.logs.add("gameday", "info", "game day finished", [["grade", sc.grade], ["passed", `${sc.passed}/${sc.total}`]]);
+    this.saveGameDay();
+    this.renderGameDay();
+    if (!run.cancelled) this.openGameDayReport();
+  }
+
+  private renderGameDay(): void {
+    const run = this.gd;
+    $("gd-run").hidden = this.gdRunning;
+    $("gd-cancel").hidden = !this.gdRunning;
+    $("gd-report").hidden = !run || this.gdRunning;
+    $("gd-progress").hidden = !this.gdRunning;
+    const results = new Map(run?.results.map((r) => [r.id, r]) ?? []);
+    const chip: Record<string, string> = { queued: "queued", running: "running…", pass: "✓ held", fail: "✗ rejected", aborted: "aborted", idle: "" };
+    $("gd-list").innerHTML = EXPERIMENTS.map((e) => {
+      const r = results.get(e.id);
+      const st = r?.state ?? "idle";
+      const checks =
+        r && (st === "pass" || st === "fail" || st === "aborted")
+          ? `<ul class="gd-checks">${r.checks.map((c) => `<li class="${c.info ? "info" : c.ok ? "ok" : "bad"}">${c.info ? "ℹ" : c.ok ? "✓" : "✗"} ${esc(c.name)} <span class="muted">${esc(c.detail)}</span></li>`).join("")}${r.error ? `<li class="bad">✗ ${esc(r.error)}</li>` : ""}</ul>`
+          : "";
+      return `<li class="gd-item st-${st}">
+        <label class="gd-pick"><input type="checkbox" data-exp="${e.id}" ${this.gdSelected.has(e.id) ? "checked" : ""} ${this.gdRunning ? "disabled" : ""} aria-label="${esc(e.name)}"></label>
+        <div class="gd-main">
+          <div class="gd-title">${e.icon} <b>${esc(e.name)}</b> <span class="muted small">~${e.seconds + 10}s</span>
+            ${st !== "idle" ? `<span class="gd-chip st-${st}">${chip[st]}</span>` : ""}
+            ${r?.incidentId ? `<a href="#" class="gd-link" data-inc="${r.incidentId}">incident #${r.incidentId}</a>` : ""}</div>
+          <div class="gd-hyp">${esc(e.hypothesis)}</div>
+          ${checks}
+        </div>
+      </li>`;
+    }).join("");
+    if (run && !this.gdRunning) $("gd-report").textContent = `📄 Game Day report · ${score(run).grade}`;
+    if (this.reportGameDay && ($("report-dialog") as HTMLDialogElement).open) this.renderReport();
+  }
+
+  private toggleMonkey(): void {
+    this.monkey = !this.monkey;
+    const b = $("monkey-btn");
+    b.setAttribute("aria-pressed", String(this.monkey));
+    b.classList.toggle("on", this.monkey);
+    b.textContent = this.monkey ? "🐒 Chaos Monkey: ON" : "🐒 Chaos Monkey: off";
+    if (this.monkey) {
+      this.alerts.raise({ level: "warning", title: "Chaos Monkey released", body: "A random fault every few seconds (kill, stop, partition or packet loss), healed after a few seconds. Press M or the button to stop it." });
+      this.logs.add("monkey", "warn", "chaos monkey on");
+      this.monkeyLoop();
+    } else {
+      this.logs.add("monkey", "info", "chaos monkey off");
+    }
+  }
+
+  private async monkeyLoop(): Promise<void> {
+    const stopped = () => !this.monkey;
+    const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+    try {
+      while (this.monkey) {
+        await this.ensureSteady(stopped, () => {});
+        await this.pause(rnd(3000, 7000), stopped);
+        const live = (this.snap?.nodes ?? []).filter((n) => n.reachable && !n.faults?.isolated);
+        const n = live[Math.floor(Math.random() * live.length)];
+        if (!n) continue;
+        const r = Math.random();
+        if (r < 0.35) await this.act(n.id, "kill", { why: "chaos monkey" });
+        else if (r < 0.55) await this.act(n.id, "stop", { why: "chaos monkey" });
+        else if (r < 0.8) await this.act(n.id, "isolate", { why: "chaos monkey" });
+        else {
+          await this.be.setFaults(n.id, { isolated: false, drop_percent: 30, delay_ms: 5 });
+          this.logAction(`chaos monkey: 30% packet loss + 5ms delay on ${n.id}`);
+          this.tracker.action("chaos", `30% packet loss + 5 ms delay on ${n.id} (chaos monkey)`, this.demo);
+        }
+        await this.pause(rnd(4000, 8000), stopped);
+        await this.scenario("heal");
+        await this.waitUntil(() => !this.tracker.active, 30_000, stopped);
+      }
+    } catch {
+      /* stopped */
+    }
+    // The monkey may have struck a moment ago: heal until the cluster is steady.
+    try {
+      for (let i = 0; i < 3 && !this.monkey; i++) {
+        await this.scenario("heal");
+        if (await this.waitUntil(() => this.steady(), 10_000, () => this.monkey)) break;
+      }
+    } catch {
+      /* switched back on: the new loop takes over */
+    }
+  }
+
+  private wireGameDay(): void {
+    $("gd-run").addEventListener("click", () => this.runGameDay());
+    $("gd-cancel").addEventListener("click", () => {
+      this.gdCancel = true;
+      this.gdStep("stopping: healing the cluster…");
+    });
+    $("gd-report").addEventListener("click", () => this.openGameDayReport());
+    $("monkey-btn").addEventListener("click", () => this.toggleMonkey());
+    $("gd-list").addEventListener("change", (e) => {
+      const cb = (e.target as HTMLElement).closest<HTMLInputElement>("[data-exp]");
+      if (!cb) return;
+      if (cb.checked) this.gdSelected.add(cb.dataset.exp!);
+      else this.gdSelected.delete(cb.dataset.exp!);
+    });
+    $("gd-list").addEventListener("click", (e) => {
+      const a = (e.target as HTMLElement).closest<HTMLElement>("[data-inc]");
+      if (!a) return;
+      e.preventDefault();
+      this.openReport(Number(a.dataset.inc));
+    });
+  }
+
+  private loadGameDay(): GameDayRun | null {
+    try {
+      const raw = localStorage.getItem(`distkv-gameday:${this.be.mode}`);
+      const run = raw ? (JSON.parse(raw) as GameDayRun) : null;
+      // A run interrupted by a reload can't continue.
+      run?.results.forEach((r) => {
+        if (r.state === "running" || r.state === "queued") r.state = "aborted";
+      });
+      return run;
+    } catch {
+      return null;
+    }
+  }
+
+  private saveGameDay(): void {
+    try {
+      localStorage.setItem(`distkv-gameday:${this.be.mode}`, JSON.stringify(this.gd));
+    } catch {
+      /* ignore */
     }
   }
 

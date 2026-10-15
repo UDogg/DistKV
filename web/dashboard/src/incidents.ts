@@ -46,6 +46,19 @@ export interface ClientCount {
   failed: number;
 }
 
+/** Consistency-probe counters at the start and end of an incident. */
+export interface ConsistencyWindow {
+  opsStart: number;
+  opsEnd: number;
+  violStart: number;
+  violEnd: number;
+  /** Epochs close a little after the fault heals; counting stops here. */
+  finalUntil?: number;
+}
+
+/** After resolution, keep counting verified operations for this long. */
+export const CONSISTENCY_GRACE_MS = 6000;
+
 export interface Incident {
   id: number;
   title: string;
@@ -67,6 +80,7 @@ export interface Incident {
   baseline: Sample[];
   clientStart?: ClientCount;
   clientEnd?: ClientCount;
+  consistency?: ConsistencyWindow;
   mode: "live" | "sim";
 }
 
@@ -123,6 +137,7 @@ export class IncidentTracker {
   private seen = new Set<string>();
   private leaderlessSince = new Map<number, number>();
   private nextId = 1;
+  private finalizing: Incident | null = null;
   current: Issue[] = [];
 
   constructor(
@@ -196,6 +211,14 @@ export class IncidentTracker {
     };
     this.recent.push(sample);
     if (this.recent.length > 30) this.recent.shift();
+    const cons = demo?.consistency;
+    const fin = this.finalizing;
+    if (fin?.consistency && cons) {
+      fin.consistency.opsEnd = cons.ops_checked;
+      fin.consistency.violEnd = cons.violations_total;
+      fin.severity = severityOf(fin);
+      if (s.ts >= (fin.consistency.finalUntil ?? 0)) this.finalizing = null;
+    }
     const issues = issuesOf(s);
     this.current = issues;
     for (const sh of s.shards) {
@@ -237,6 +260,11 @@ export class IncidentTracker {
         const which = lost.length === 1 ? `shard ${lost[0]}` : `${lost.length} shards (${lost.sort((x, y) => x - y).join(", ")})`;
         this.emit({ type: "escalated", incident: inc, detail: `${which} lost quorum: leaderless for ${QUORUM_LOST_MS / 1000}s, writes there fail` });
       }
+      if (cons) {
+        inc.consistency ??= { opsStart: cons.ops_checked, opsEnd: cons.ops_checked, violStart: cons.violations_total, violEnd: cons.violations_total };
+        inc.consistency.opsEnd = cons.ops_checked;
+        inc.consistency.violEnd = cons.violations_total;
+      }
       inc.severity = severityOf(inc);
       inc.clientEnd = clientOf(demo) ?? inc.clientEnd;
       // A fault injected from here may take a moment to show; until it does
@@ -271,6 +299,9 @@ export class IncidentTracker {
       samples: [],
       baseline: this.recent.slice(-15),
       clientStart: clientOf(demo),
+      consistency: demo?.consistency
+        ? { opsStart: demo.consistency.ops_checked, opsEnd: demo.consistency.ops_checked, violStart: demo.consistency.violations_total, violEnd: demo.consistency.violations_total }
+        : undefined,
       mode: this.mode,
     };
     this.active = inc;
@@ -288,6 +319,10 @@ export class IncidentTracker {
     for (const f of inc.failovers) if (!f.electedAt) f.electedAt = inc.resolvedAt;
     inc.severity = severityOf(inc);
     inc.timeline.push({ ts: inc.resolvedAt, kind: "resolved", detail: "all nodes healthy and every shard has a leader" });
+    if (inc.consistency) {
+      inc.consistency.finalUntil = inc.resolvedAt + CONSISTENCY_GRACE_MS;
+      this.finalizing = inc;
+    }
     this.active = null;
     this.emit({ type: "resolved", incident: inc, detail: "" });
   }
@@ -331,7 +366,8 @@ function clientOf(demo: DemoInfo | null): ClientCount | undefined {
  */
 export function severityOf(inc: Incident): Severity {
   const failed = inc.clientStart && inc.clientEnd ? inc.clientEnd.failed - inc.clientStart.failed : 0;
-  if (failed > 0 || inc.quorumLost.length) return "SEV1";
+  const violations = inc.consistency ? inc.consistency.violEnd - inc.consistency.violStart : 0;
+  if (failed > 0 || inc.quorumLost.length || violations > 0) return "SEV1";
   if (inc.failovers.length) return "SEV2";
   return "SEV3";
 }
@@ -360,6 +396,11 @@ export interface Summary {
   clientFailed?: number;
   availability?: number;
   dipPercent: number;
+  /** Operations the consistency probe verified across the incident. */
+  verifiedOps?: number;
+  violations?: number;
+  /** Still counting epochs that span the incident. */
+  verifying?: boolean;
 }
 
 const median = (xs: number[]) => {
@@ -396,5 +437,8 @@ export function summarize(inc: Incident): Summary {
     clientFailed,
     availability: clientOk !== undefined && clientFailed !== undefined && clientOk + clientFailed > 0 ? clientOk / (clientOk + clientFailed) : undefined,
     dipPercent: baseOps > 0 ? Math.max(0, (1 - minOps / baseOps) * 100) : 0,
+    verifiedOps: inc.consistency ? inc.consistency.opsEnd - inc.consistency.opsStart : undefined,
+    violations: inc.consistency ? inc.consistency.violEnd - inc.consistency.violStart : undefined,
+    verifying: !!inc.consistency && (inc.status === "open" || Date.now() < (inc.consistency.finalUntil ?? 0)),
   };
 }

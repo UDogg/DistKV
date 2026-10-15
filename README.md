@@ -188,6 +188,56 @@ parser and HTTP client).</sub></td>
 </tr>
 </table>
 
+## 🎯 Game Day: chaos experiments with a correctness proof
+
+<table>
+<tr>
+<td width="55%"><img src="docs/assets/gameday.png" alt="Game Day experiments with automatic verdicts"></td>
+<td width="45%" valign="top">
+
+**Five experiments, each a falsifiable hypothesis**, run end to end at the press of a button:
+wait for a steady state → inject the fault → observe → heal → wait for recovery → **verify**.
+
+| | Hypothesis |
+|---|---|
+| 💥 | Losing the busiest leader costs clients nothing; failover < 2 s |
+| ✂️ | A partitioned leader steps down; no stale reads |
+| 📉 | 30% packet loss on two nodes is absorbed by retries |
+| 🔁 | A rolling restart causes zero failovers and zero errors |
+| 🛑 | With a shard's majority down, DistKV **refuses writes rather than diverge** (CP) |
+
+On a real 5-node `make demo`: **5 of 5 hypotheses held, grade A+**, with **10,450 operations verified
+linearizable** during the run. Plus **🐒 Chaos Monkey**: random faults until you switch it off.
+
+</td>
+</tr>
+<tr>
+<td><img src="docs/assets/consistency.png" alt="Live linearizability checking"></td>
+<td valign="top">
+
+**Live linearizability checking, Jepsen style.** While you break things, a probe client reads, writes and
+deletes a few keys and records every operation's invocation and response time. Every 2 s a solo
+*barrier read* per key pins its state and closes an **epoch**, whose history is verified with the
+**Wing & Gong** checker (Lowe's memoisation, as in Porcupine). Writes whose outcome the client never
+learned are carried forward as "may take effect later".
+
+The **✓ LINEARIZABLE** pill and tile are live verdicts, and every incident report says how many
+operations were verified across it. Hatched bars are keys whose shard had no leader: their epoch
+can't close until a majority is back.
+
+</td>
+</tr>
+<tr>
+<td><img src="docs/assets/gameday-report.png" alt="Game Day report"></td>
+<td valign="top">
+
+**The Game Day report** scores the run (A+ to F), shows each hypothesis with its checks, and links
+every incident report. Download it as HTML or Markdown, or print it to PDF.
+
+</td>
+</tr>
+</table>
+
 ## 🏗️ Architecture
 
 ```mermaid

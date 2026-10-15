@@ -23,6 +23,7 @@
       <span id="health-pill" class="pill pill-wait">connecting…</span>
       <span id="conn-pill" class="pill pill-muted">—</span>
       <span id="mode-pill" class="pill pill-accent" hidden>DEMO</span>
+      <button id="consistency-pill" class="pill pill-muted pill-btn" hidden title="Live linearizability checking: click for details">—</button>
     </div>
     <div class="top-actions">
       <span class="observed" id="observed"></span>
@@ -87,6 +88,20 @@
         <label><span>Read ratio <output id="ratio-out">80</output>%</span>
           <input type="range" id="ratio" min="0" max="100" step="5"></label>
       </div>
+    </section>
+
+    <section class="card gameday-card" id="gameday-card" hidden>
+      <header>
+        <h2>🎯 Game Day <small>hypothesis-driven chaos experiments with automatic verdicts</small></h2>
+        <div class="card-actions">
+          <button class="btn primary" id="gd-run">▶ Run Game Day</button>
+          <button class="btn danger" id="gd-cancel" hidden>■ Stop</button>
+          <button class="btn" id="gd-report" hidden>📄 Game Day report</button>
+          <button class="btn monkey" id="monkey-btn" aria-pressed="false" title="Random faults every few seconds until you turn it off">🐒 Chaos Monkey: off</button>
+        </div>
+      </header>
+      <div class="gd-progress" id="gd-progress" hidden><i id="gd-bar"></i><span id="gd-step"></span></div>
+      <ol class="gd-list" id="gd-list"></ol>
     </section>
 
     <section class="card" id="incidents-card">
@@ -193,6 +208,14 @@
     <div class="report-paper" id="report-body"></div>
   </dialog>
 
+  <dialog class="report-dialog consistency-dialog" id="consistency-dialog">
+    <div class="report-toolbar">
+      <b>Consistency: live linearizability checking</b>
+      <div class="report-actions"><button class="btn sm" id="consistency-close" aria-label="Close">✕</button></div>
+    </div>
+    <div class="consistency-body" id="consistency-body"></div>
+  </dialog>
+
   <dialog class="shortcuts-dialog" id="shortcuts-dialog">
     <h3>Keyboard shortcuts</h3>
     <dl>
@@ -200,6 +223,9 @@
       <dt><kbd>P</kbd></dt><dd>Partition a random node</dd>
       <dt><kbd>L</kbd></dt><dd>30% packet loss on a random node</dd>
       <dt><kbd>H</kbd></dt><dd>Heal everything</dd>
+      <dt><kbd>G</kbd></dt><dd>Run Game Day (the selected experiments)</dd>
+      <dt><kbd>M</kbd></dt><dd>Toggle Chaos Monkey</dd>
+      <dt><kbd>C</kbd></dt><dd>Consistency details</dd>
       <dt><kbd>R</kbd></dt><dd>Open the latest incident report</dd>
       <dt><kbd>A</kbd></dt><dd>Open the alert history</dd>
       <dt><kbd>/</kbd></dt><dd>Search the logs</dd>
