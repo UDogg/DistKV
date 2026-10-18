@@ -208,6 +208,30 @@ The dashboard explains itself, so anyone can follow the demo:
 </tr>
 </table>
 
+## 🤖 Self-healing, with a repair bar for every server
+
+Raft keeps the data available while a server is down; the **self-healing autopilot** brings the server
+itself back. It watches every node, and each broken one gets its own repair, **all running in parallel**,
+shown step by step with a live progress bar and a cluster-health bar that climbs back to 100%:
+
+<p align="center"><img src="docs/assets/self-healing.png" alt="Two repairs in parallel: a power loss mid cold boot, and a network cut catching up" width="900"></p>
+
+| Fault | Repair | Why it differs |
+|---|---|---|
+| ⏹ Graceful stop | noticed → restart → catch up | Clean shutdown, so a **warm start** from its snapshot |
+| 💥 `kill -9` | power lost → power restored → **cold boot** → catch up | A power loss: **memory is wiped**, so the log on disk is replayed to rebuild it, which takes longer |
+| ✂️ Partition | link down → re-route → catch up | Alive but cut off; it downloads every change it missed |
+| 📉 Packet loss | diagnose → swap the link → verify | Raft re-sends lost messages; the autopilot removes the cause |
+
+Every stage ends on what is **observed** (the process runs, the node answers, its replication lag is
+gone), never on a timer alone, so a bar never claims a recovery that hasn't happened. The autopilot
+stands back during Game Day and rolling restarts (they control healing themselves) and can be
+switched off (<kbd>S</kbd>) to repair by hand.
+
+**It's a game, too:** breaking things earns XP, each recovery is rated ★★★ (fast and lossless), and
+13 achievements (*Kingslayer*, *Phoenix*, *Flawless*, *Majority lost*…) take you from *Curious
+visitor* to *Principal chaos wizard*. Open the trophy cabinet with 🏆 or <kbd>X</kbd>.
+
 ## 🎯 Game Day: chaos experiments with a correctness proof
 
 <table>

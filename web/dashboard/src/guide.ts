@@ -40,7 +40,10 @@ export const EXPLAIN: Record<string, Explanation> = {
   "sc-partition": { t: "Partition a server", b: "Cuts one server off the network. It keeps running but can't talk to anyone, like a data center losing its internet link. The rest carry on without it." },
   "sc-lossy": { t: "30% packet loss", b: "Makes one server's network flaky: 30% of its messages vanish, like terrible Wi-Fi. The system re-sends what's lost, so answers stay correct; things just get a little slower." },
   "sc-rolling": { t: "Rolling restart", b: "Restarts every server one after another, the way companies install updates without any downtime. Availability should stay near 100% throughout." },
-  "sc-heal": { t: "Heal everything", b: "Restarts stopped servers and repairs all network faults. The incident closes once every shard has a leader and every server is healthy again." },
+  "sc-heal": { t: "Heal everything", b: "Restarts stopped servers and repairs all network faults right now. With self-healing on you rarely need it: the autopilot does this on its own. The incident closes once every shard has a leader and every server is healthy again." },
+  autopilot: { t: "🤖 Self-healing autopilot", b: "The automation real companies run around their databases (like Kubernetes restarting a crashed program). When a server breaks, it notices, repairs it and lets it catch up. Every broken server gets its own repair, all at the same time. A clean stop comes back quickly (warm start). A <b>kill -9</b> is a power loss: the server's memory is wiped, so it must cold-boot and rebuild its memory from the log on disk, which takes longer. Switch it off to repair things by hand." },
+  hp: { t: "Cluster health", b: "Half of it is the share of data slices that have a leader (can be read and written); the other half is how many servers are fully back. A server under repair counts for its repair's progress, so you can watch the bar climb back to 100%." },
+  trophies: { t: "Trophies and your level", b: "You earn experience points for breaking things and for every disaster the cluster survives, plus achievements like <b>Kingslayer</b> or <b>Flawless</b>. Each recovery is rated with up to 3 stars. Your progress is kept in this browser." },
   "load-rate": { t: "Generated load", b: "How many fake users' requests per second are hitting the cluster. Turn it up to see how it copes under pressure." },
   "load-ratio": { t: "Read ratio", b: "The mix of lookups versus saves. Most real apps read far more than they write (80% reads is typical)." },
 
@@ -142,6 +145,7 @@ export class Explainer {
     const x = this.dict[el.dataset.explain!];
     if (!x || !el.isConnected) return;
     this.target = el;
+    document.dispatchEvent(new CustomEvent("distkv-explain", { detail: el.dataset.explain }));
     this.tip.innerHTML = `<b>${x.t}</b><span>${x.b}</span>`;
     this.tip.hidden = false;
     el.setAttribute("aria-describedby", "xtip");
@@ -254,11 +258,13 @@ export const TOUR: TourStep[] = [
   { target: ".status-strip", title: "1 · The health light", body: "Green means everything works. If you break something it turns amber or red, then back to green by itself. That self-healing is the whole point." },
   { target: "#kpis", title: "2 · Vital signs", body: "How busy the cluster is, how fast it answers (goal: under 10 ms), and the share of requests that succeed (goal: 99.9%+). The last tile counts answers an independent checker has <b>proven correct</b>." },
   { target: "#control-card", title: "3 · The chaos lab", body: "This is where you break things: crash a server, cut its network, make its network flaky. Every button is safe to press, and hovering one explains it in plain words." },
+  { target: "#autopilot-btn", title: "Self-healing", body: "The <b>🤖 autopilot</b> repairs broken servers on its own, all at the same time, with a live progress bar for each repair. Turn it off if you'd rather fix things by hand." },
   { target: "#nodes-card", title: "4 · The servers", body: "Each card is one computer. <b>Leads</b> counts the slices of data it's in charge of. Use <b>kill -9</b> to crash one instantly, or <b>Graceful stop</b> to shut it down politely." },
   { target: "#shards-card", title: "5 · Who's in charge of what", body: "The data is cut into slices (<b>shards</b>), each copied to 3 servers. <b>★</b> marks the leader of each slice. Crash a server and watch its ★s jump to other servers within about a second." },
   { target: "#ring-card", title: "6 · Where your data lives", body: "Type any name, like <code>user:42</code>, and see which shard and which server would store it. Every computer works this out with the same formula, so nobody has to ask." },
   { target: "#gameday-card", title: "7 · Game Day and Chaos Monkey", body: "<b>Game Day</b> runs a series of disaster drills and grades the cluster. <b>Chaos Monkey</b> breaks random things until you stop it. Both are what real reliability teams do." },
   { target: "#incidents-card", title: "8 · Incidents and reports", body: "Every failure becomes an incident with an alert when it starts, another when it heals, and a report you can download: how long recovery took, and how many requests (if any) failed." },
+  { target: "#trophy-btn", title: "Your score", body: "Breaking things earns experience points, each recovery is rated with up to 3 stars, and there are achievements to unlock. Open the trophy cabinet to see what's left." },
   { target: "#alert-bell", title: "9 · Your turn", body: "Alerts land here. Now press <b>💥 Kill busiest leader</b> and watch: the health light flickers, new leaders are elected, and a green \"resolved\" alert arrives a moment later.", bodyNoChaos: "Alerts land here: a red one if a server fails, a green one when the cluster has healed itself. To break things on purpose, open the simulation (this dashboard on GitHub Pages) or run <code>make demo</code>." },
 ];
 
@@ -318,7 +324,10 @@ export class Tour {
 
   private go(i: number): void {
     if (i < 0) return;
-    if (i >= this.steps.length) return this.end();
+    if (i >= this.steps.length) {
+      document.dispatchEvent(new CustomEvent("distkv-tour-done"));
+      return this.end();
+    }
     this.i = i;
     const s = this.steps[i];
     const last = i === this.steps.length - 1;
@@ -434,7 +443,8 @@ export function openWelcome(ctx: WelcomeContext): void {
        <tr><td><span class="wl-btn">🔁 Rolling restart</span></td><td><b>Restart every server one by one</b>, the way companies ship updates with no downtime.</td></tr>
        <tr><td><span class="wl-btn warn">🐒 Chaos Monkey</span></td><td><b>Random disasters every few seconds.</b> Named after Netflix's real tool that breaks its own servers on purpose.</td></tr>
        <tr><td><span class="wl-btn primary">🎯 Game Day</span></td><td><b>A fire drill:</b> a series of disasters, each checked automatically, with a grade at the end.</td></tr>
-       <tr><td><span class="wl-btn ok">🩹 Heal</span></td><td><b>Fix everything</b> and watch it return to green.</td></tr>
+       <tr><td><span class="wl-btn ok">🤖 Self-healing</span></td><td><b>Fixes broken servers on its own, all at once</b>, with a progress bar for each repair. A crashed (<code>kill -9</code>) server takes longer: its memory was wiped, so it must cold-boot and rebuild it from disk.</td></tr>
+       <tr><td><span class="wl-btn ok">🩹 Heal</span></td><td><b>Fix everything right now</b>, without waiting for the autopilot.</td></tr>
      </table>
      ${ctx.canBreak ? "" : `<p class="muted small">The chaos buttons appear in the simulation (this site on GitHub Pages) and in the local demo (<code>make demo</code>).</p>`}`,
     // 4 · watch
@@ -444,7 +454,9 @@ export function openWelcome(ctx: WelcomeContext): void {
        <li><b class="okc">Availability stays near 100%</b>: the share of requests that succeeded, even while you break things. The industry bar is 99.9%.</li>
        <li><b class="okc">Speed stays under 10 ms</b>: 99 of every 100 requests finish within one thirtieth of a blink.</li>
        <li><b class="okc">Linearizable ✓</b>: an independent checker proves every answer was correct: nothing stale, nothing lost.</li>
+       <li><b>🤖 Repair bars</b>: watch every broken server being fixed, step by step, and the cluster's health bar climb back to 100%.</li>
        <li><b>🔔 Alerts</b>: a red one when something breaks, a green one when it has healed, and a report you can download.</li>
+       <li><b>🏆 Score</b>: each recovery earns up to 3 stars, and breaking things earns experience points and achievements. Can you reach <i>Principal chaos wizard</i>?</li>
        <li><b>Hover anything</b> (or tap an <span class="ex-i demo" aria-hidden="true">?</span>) for a plain-English explanation.</li>
      </ul>
      <label class="wl-check"><input type="checkbox" id="wl-coach" ${ctx.coach.enabled ? "checked" : ""}> Explain what's happening as I go (recommended)</label>`,
