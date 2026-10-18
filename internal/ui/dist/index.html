@@ -27,6 +27,7 @@
     </div>
     <div class="top-actions">
       <span class="observed" id="observed"></span>
+      <button class="trophy-btn" id="trophy-btn" data-explain="trophies">🏆</button>
       <div class="bell-wrap">
         <button class="icon-btn bell" id="alert-bell" data-explain="alerts" aria-label="Alerts">🔔<span class="bell-count" id="alert-count" hidden>0</span></button>
         <div class="alert-panel" id="alert-panel" hidden></div>
@@ -59,6 +60,8 @@
       </div>
     </section>
 
+    <section class="card heal-hud" id="heal-hud" hidden aria-live="polite"></section>
+
     <section class="kpis" id="kpis"></section>
 
     <section class="grid two">
@@ -76,6 +79,7 @@
       <header>
         <h2>Chaos lab <button class="ex-i" type="button" data-explain="chaos" aria-label="What is this?">?</button> <small id="chaos-sub">real processes, real failures</small></h2>
         <div class="scenario-buttons">
+          <button class="btn autopilot on" id="autopilot-btn" data-explain="autopilot" aria-pressed="true">🤖 Self-healing: <b id="autopilot-state">on</b></button>
           <button class="btn danger" data-scenario="kill-leader" data-explain="sc-kill-leader">💥 Kill busiest leader</button>
           <button class="btn warn" data-scenario="partition" data-explain="sc-partition">✂️ Partition random node</button>
           <button class="btn warn" data-scenario="lossy" data-explain="sc-lossy">📉 30% packet loss</button>
@@ -83,7 +87,7 @@
           <button class="btn ok" data-scenario="heal" data-explain="sc-heal">🩹 Heal everything</button>
         </div>
       </header>
-      <p class="chaos-hint muted small">Every fault opens an <b>incident</b>: you get an alert when it starts, another when the cluster has healed, and a report of what happened. Shortcuts: <kbd>K</kbd> kill · <kbd>P</kbd> partition · <kbd>L</kbd> loss · <kbd>H</kbd> heal · <kbd>?</kbd> all.</p>
+      <p class="chaos-hint muted small"><span id="heal-hint">With <b>🤖 self-healing</b> on, every broken server is repaired automatically, all at the same time, so there's no need to press Heal. </span>Every fault opens an <b>incident</b>: you get an alert when it starts, another when the cluster has healed, and a report of what happened. Shortcuts: <kbd>K</kbd> kill · <kbd>P</kbd> partition · <kbd>L</kbd> loss · <kbd>H</kbd> heal · <kbd>?</kbd> all.</p>
       <div class="load-controls">
         <label data-explain="load-rate"><span>Generated load <output id="rate-out">0</output> ops/s</span>
           <input type="range" id="rate" min="0" max="6000" step="100"></label>
@@ -231,11 +235,24 @@
       <dt><kbd>R</kbd></dt><dd>Open the latest incident report</dd>
       <dt><kbd>A</kbd></dt><dd>Open the alert history</dd>
       <dt><kbd>/</kbd></dt><dd>Search the logs</dd>
+      <dt><kbd>S</kbd></dt><dd>Self-healing on/off</dd>
+      <dt><kbd>X</kbd></dt><dd>Trophies and achievements</dd>
       <dt><kbd>I</kbd></dt><dd>Intro: what is this?</dd>
       <dt><kbd>T</kbd></dt><dd>Guided tour</dd>
       <dt><kbd>Esc</kbd></dt><dd>Close dialogs</dd>
     </dl>
     <form method="dialog"><button class="btn">Close</button></form>
+  </dialog>
+
+  <dialog class="report-dialog trophy-dialog" id="trophy-dialog">
+    <div class="report-toolbar">
+      <b>🏆 Your chaos career</b>
+      <div class="report-actions">
+        <button class="btn sm" id="trophy-reset">Reset</button>
+        <button class="btn sm" id="trophy-close" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <div class="trophy-body" id="trophy-body"></div>
   </dialog>
 
   <footer>

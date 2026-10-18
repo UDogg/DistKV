@@ -2,6 +2,23 @@
 
 ## Unreleased: Game Day, live linearizability checking, incidents, a guided dashboard
 
+### New: self-healing and a game layer
+- **Self-healing autopilot** (on by default; `S` or the 🤖 button toggles it). Every broken node gets
+  its own repair, all running in parallel, so nobody has to press Heal. Each fault has its own playbook:
+  a graceful stop restarts warm; a `kill -9` is a power loss (power restored → cold boot, rebuilding the
+  wiped memory from the log on disk → catch-up), so it takes longer; a partition is re-routed, then
+  catches up; packet loss gets its link swapped. Stages finish on observed state (process running,
+  node answering, replication lag gone), not on timers alone. The autopilot stands back during Game Day
+  and rolling restarts. Chaos Monkey relies on it when it's on. Its actions appear in the timeline,
+  logs and incident reports.
+- **Repair HUD**: a cluster-health bar, one card per repair with its steps, progress, elapsed time and
+  the live catch-up count ("4,209 changes to go"), a repair bar on each node card, and a result banner
+  with a ★ rating. Booting nodes are shown as booting, not down.
+- **Game layer**: XP and six levels, a ★–★★★ rating for every recovery, 13 achievements with unlock
+  celebrations, and a trophy cabinet with your stats (`X`). Kept in this browser only.
+- The simulation now models boot time (warm 0.7 s, cold 2.4 s) and gradual catch-up, so recovery is
+  something to watch rather than instant.
+
 ### New: a dashboard anyone can follow
 - **Welcome dialog** on the first visit: what DistKV is and why it matters, how it works in four ideas
   (shards, replicas, leaders, majority vote), every chaos button explained in everyday terms (`kill -9`

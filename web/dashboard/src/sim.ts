@@ -25,6 +25,12 @@ import type {
 
 const ELECTION_MIN_MS = 300;
 const ELECTION_JITTER_MS = 400;
+// Boot times: a clean shutdown leaves a snapshot to load (warm start); a
+// SIGKILL loses everything in memory, so the whole log is replayed (cold).
+const WARM_BOOT_MS = 700;
+const COLD_BOOT_MS = 2400;
+// Log entries a reconnected follower catches up per 100 ms step.
+const CATCHUP_PER_STEP = 40;
 
 interface SimNode {
   id: string;
@@ -35,6 +41,7 @@ interface SimNode {
   pid: number;
   faults: Faults;
   startedAt: number;
+  readyAt: number; // the process runs from start, but serves only once booted
 }
 
 interface SimShard {
@@ -84,6 +91,7 @@ export class SimBackend implements Backend {
       pid: this.nextPid++,
       faults: { isolated: false, drop_percent: 0, delay_ms: 0 },
       startedAt: now - 3_600_000 * Math.random(),
+      readyAt: 0,
     }));
     this.shards = Array.from({ length: nShards }, (_, s) => ({
       leader: this.topo.replicas(s)[0],
@@ -114,8 +122,9 @@ export class SimBackend implements Backend {
     setInterval(() => this.step(Date.now()), 100);
   }
 
+  /** Running and booted: reachable over the network. */
   private up(n: SimNode): boolean {
-    return n.state === "running";
+    return n.state === "running" && Date.now() >= n.readyAt;
   }
 
   private connected(n: SimNode): boolean {
@@ -158,8 +167,9 @@ export class SimBackend implements Backend {
       for (const n of reps) {
         if (n.id === sh.leader) continue;
         // A disconnected follower falls further behind every tick.
+        // A reconnected one catches up gradually rather than at once.
         sh.lag[n.id] = this.connected(n)
-          ? Math.floor(Math.random() * (3 + drop * 4))
+          ? Math.max(Math.floor(Math.random() * (3 + drop * 4)), (prevLag[n.id] ?? 0) - CATCHUP_PER_STEP)
           : (prevLag[n.id] ?? 0) + Math.floor(this.rate / 400);
       }
     }
@@ -304,8 +314,12 @@ export class SimBackend implements Backend {
     const now = Date.now();
     if (action === "start") {
       if (n.state !== "running") {
-        Object.assign(n, { state: "running", since: now, starts: n.starts + 1, pid: this.nextPid++, startedAt: now });
-        this.bootLogs(n);
+        const cold = n.state === "killed";
+        Object.assign(n, { state: "running", since: now, starts: n.starts + 1, pid: this.nextPid++, startedAt: now, readyAt: now + (cold ? COLD_BOOT_MS : WARM_BOOT_MS) });
+        this.log(id, "INFO", "starting distkv", { version: "v0.2.0-sim", pid: n.pid });
+        if (cold) this.log(id, "WARN", "unclean shutdown detected: replaying the write-ahead log to rebuild in-memory state");
+        else this.log(id, "INFO", "clean shutdown detected: loading snapshot");
+        setTimeout(() => this.bootLogs(n, true), n.readyAt - now);
       }
       return;
     }
@@ -357,9 +371,9 @@ export class SimBackend implements Backend {
     }
   }
 
-  private bootLogs(n: SimNode): void {
+  private bootLogs(n: SimNode, restarted = false): void {
     const hosted = this.shards.map((_, i) => i).filter((i) => this.topo.replicas(i).includes(n.id));
-    this.log(n.id, "INFO", "starting distkv", { version: "v0.2.0-sim", pid: n.pid });
+    if (!restarted) this.log(n.id, "INFO", "starting distkv", { version: "v0.2.0-sim", pid: n.pid });
     this.log(n.id, "INFO", "node initialised", { shards_hosted: hosted.length, total_shards: this.shards.length, replication_factor: 3 });
     for (const s of hosted) this.log(n.id, "INFO", "raft node started", { shard: s, term: this.shards[s]?.term ?? 1 });
     this.log(n.id, "INFO", "serving", { addr: n.addr.replace(/^http:\/\//, ""), advertise: n.addr });
