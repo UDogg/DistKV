@@ -1,0 +1,137 @@
+{
+  "bin_ms": 100,
+  "concurrency": 16384,
+  "cpus": 4,
+  "fsync": true,
+  "git_commit": "c08b492",
+  "go": "go1.24.7",
+  "keys": 20000,
+  "nodes": 5,
+  "op_timeout_s": 5,
+  "os": "linux/amd64",
+  "post_s": 20,
+  "pre_s": 10,
+  "rate": 3000,
+  "read_ratio": 0.8,
+  "replication": 3,
+  "runs": 3,
+  "scenarios": [
+    {
+      "category": "baseline",
+      "extra_flags": null,
+      "hold_s": 10,
+      "id": "baseline",
+      "title": "No fault",
+      "what": "The same schedule with nothing injected: the reference for every other scenario."
+    },
+    {
+      "category": "crash",
+      "extra_flags": null,
+      "hold_s": 10,
+      "id": "crash-leader",
+      "title": "Crash the busiest leader (SIGKILL)",
+      "what": "SIGKILL the node leading the most shards; restart it from its data directory 10 s later (power loss: in-memory state is gone, the WAL survives)."
+    },
+    {
+      "category": "crash",
+      "extra_flags": [
+        "--election-timeout",
+        "250ms",
+        "--heartbeat",
+        "25ms"
+      ],
+      "hold_s": 10,
+      "id": "crash-leader-et250",
+      "title": "Crash, election timeout 250 ms",
+      "what": "As crash-leader, with the election timeout halved (heartbeat 25 ms)."
+    },
+    {
+      "category": "crash",
+      "extra_flags": [
+        "--election-timeout",
+        "1s",
+        "--heartbeat",
+        "100ms"
+      ],
+      "hold_s": 10,
+      "id": "crash-leader-et1000",
+      "title": "Crash, election timeout 1 s",
+      "what": "As crash-leader, with the election timeout doubled (heartbeat 100 ms)."
+    },
+    {
+      "category": "crash",
+      "extra_flags": null,
+      "hold_s": 10,
+      "id": "stop-leader",
+      "title": "Graceful stop of the busiest leader (SIGTERM)",
+      "what": "SIGTERM: the node transfers its leaderships (TimeoutNow) before exiting; restarted 10 s later."
+    },
+    {
+      "category": "slow",
+      "extra_flags": null,
+      "hold_s": 10,
+      "id": "pause-leader",
+      "title": "Pause the busiest leader (SIGSTOP)",
+      "what": "Freeze the process for 10 s (a long GC pause or a stalled VM), then SIGCONT. Its leases must lapse before others take over."
+    },
+    {
+      "category": "partition",
+      "extra_flags": null,
+      "hold_s": 10,
+      "id": "partition-leader",
+      "title": "Partition the busiest leader",
+      "what": "Cut the leader off from all peers for 10 s (clients can still reach it). Check-quorum must demote it and the majority elect replacements."
+    },
+    {
+      "category": "partition",
+      "extra_flags": null,
+      "hold_s": 10,
+      "id": "partition-minority",
+      "title": "Partition two nodes (a minority)",
+      "what": "Isolate the two busiest leaders for 10 s. Shards with two of their three replicas on that side lose quorum and must refuse requests (CP)."
+    },
+    {
+      "category": "partition",
+      "extra_flags": null,
+      "hold_s": 10,
+      "id": "partition-flapping",
+      "title": "Flapping partition (1 s on, 1 s off, x5)",
+      "what": "Isolate and reconnect the busiest leader five times in a row, faster than leadership can settle."
+    },
+    {
+      "category": "slow",
+      "extra_flags": null,
+      "hold_s": 10,
+      "id": "slow-link-50ms",
+      "title": "Slow links: +50 ms on the busiest leader",
+      "what": "Delay every Raft message to and from the leader by 50 ms for 10 s (a congested or distant link)."
+    },
+    {
+      "category": "slow",
+      "extra_flags": null,
+      "hold_s": 10,
+      "id": "slow-link-200ms",
+      "title": "Slow links: +200 ms on the busiest leader",
+      "what": "As slow-link-50ms with 200 ms, close to the 500 ms election timeout."
+    },
+    {
+      "category": "slow",
+      "extra_flags": null,
+      "hold_s": 10,
+      "id": "lossy-link-30",
+      "title": "Lossy links: 30% of the leader's messages dropped",
+      "what": "Drop 30% of Raft messages to and from the leader for 10 s."
+    },
+    {
+      "category": "crash",
+      "extra_flags": null,
+      "hold_s": 45,
+      "id": "rolling-restart",
+      "title": "Rolling restart of all nodes",
+      "what": "Gracefully stop and restart every node in turn, waiting for full health before the next, as an upgrade would."
+    }
+  ],
+  "shards": 24,
+  "started_at": "2026-11-13T17:44:57Z",
+  "warmup_s": 5
+}
