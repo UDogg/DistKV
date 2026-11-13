@@ -97,6 +97,8 @@ def figure(name, width=7.0 * inch, caption=None):
 def ms(v, signed=False):
     if v is None:
         return "–"
+    if v == 0:
+        return "0 ms"
     if v >= 1000:
         return f"{v / 1000:.2f} s"
     if v >= 10:

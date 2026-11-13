@@ -108,6 +108,23 @@ commit**. That's a deliberately unfavourable setup. Methodology and raw output a
 <sub>¹ Requests to shards whose leader was killed wait out an election (~0.5–1 s at the default 500 ms timeout) and are
 retried, never lost. Write-only p99 at 10k ops/s is 13.6 ms on this shared box. See the benchmark doc.</sub>
 
+## 🔬 Raft fault-injection study
+
+A reproducible study of DistKV under **12 injected faults** (crashes at three election timeouts, graceful
+stops, process pauses, leader / minority / flapping partitions, slow and lossy links, a rolling restart),
+3 runs each on a fresh 5-node cluster: **[read the report (PDF)](study/raft-fault-injection-study.pdf)** ·
+[data and method](study/).
+
+* **11 of 12 faults caused zero failed requests**; a crashed leader cost 759 ms of p99.9 and recovered in 796 ms.
+* Recovery tracks the election timeout: 397 ms → 796 ms → 1.60 s for 250 ms → 500 ms → 1 s.
+* Losing a majority makes exactly the affected shards refuse requests (9 of 24), as a CP system must.
+* It found a **gray-failure bug in the client**: a paused leader failed 10.8% of requests for
+  8.50 s; a per-attempt timeout fixed it (100%, 1.10 s).
+
+```bash
+make study    # 14 scenarios x 3 runs (~40 min), then the figures and the PDF
+```
+
 ## 🎬 Failover, live
 
 <table>

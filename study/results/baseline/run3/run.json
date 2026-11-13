@@ -5,78 +5,78 @@
   "victim_shards_led": null,
   "shards": 24,
   "shards_without_quorum": 0,
-  "inject_ms": 10003.074,
-  "heal_ms": 20000.179,
+  "inject_ms": 10003.697,
+  "heal_ms": 20000.837,
   "end_ms": 40000,
   "events": [
     {
-      "t_ms": 10003.075,
+      "t_ms": 10003.698,
       "kind": "inject"
     },
     {
-      "t_ms": 20000.182,
+      "t_ms": 20000.838,
       "kind": "heal"
     }
   ],
   "baseline": {
-    "ops": 30008,
+    "ops": 30010,
     "errors": 0,
     "availability": 1,
-    "p50_ms": 0.701,
-    "p99_ms": 3.288,
-    "p999_ms": 12.986,
-    "max_ms": 17.583,
-    "read_p99_ms": 2.27,
-    "write_p99_ms": 4.924
+    "p50_ms": 0.695,
+    "p99_ms": 3.214,
+    "p999_ms": 13.5,
+    "max_ms": 30.361,
+    "read_p99_ms": 1.968,
+    "write_p99_ms": 6.873
   },
   "fault": {
     "ops": 29992,
     "errors": 0,
     "availability": 1,
-    "p50_ms": 0.704,
-    "p99_ms": 3.336,
-    "p999_ms": 8.814,
-    "max_ms": 22.732,
-    "read_p99_ms": 2.451,
-    "write_p99_ms": 4.925
+    "p50_ms": 0.694,
+    "p99_ms": 3.65,
+    "p999_ms": 12.982,
+    "max_ms": 55.54,
+    "read_p99_ms": 2.586,
+    "write_p99_ms": 6.63
   },
   "after": {
-    "ops": 59999,
+    "ops": 59997,
     "errors": 0,
     "availability": 1,
-    "p50_ms": 0.704,
-    "p99_ms": 3.112,
-    "p999_ms": 8.222,
-    "max_ms": 14.719,
-    "read_p99_ms": 2.255,
-    "write_p99_ms": 4.304
+    "p50_ms": 0.694,
+    "p99_ms": 3.409,
+    "p999_ms": 12.581,
+    "max_ms": 19.875,
+    "read_p99_ms": 2.527,
+    "write_p99_ms": 5.074
   },
   "impact": {
-    "ops": 89991,
+    "ops": 89989,
     "errors": 0,
     "availability": 1,
-    "p50_ms": 0.704,
-    "p99_ms": 3.204,
-    "p999_ms": 8.41,
-    "max_ms": 22.732,
-    "read_p99_ms": 2.349,
-    "write_p99_ms": 4.553
+    "p50_ms": 0.694,
+    "p99_ms": 3.509,
+    "p999_ms": 12.822,
+    "max_ms": 55.54,
+    "read_p99_ms": 2.552,
+    "write_p99_ms": 5.438
   },
   "overall": {
     "ops": 119999,
     "errors": 0,
     "availability": 1,
-    "p50_ms": 0.703,
-    "p99_ms": 3.215,
-    "p999_ms": 9.697,
-    "max_ms": 22.732,
-    "read_p99_ms": 2.311,
-    "write_p99_ms": 4.606
+    "p50_ms": 0.694,
+    "p99_ms": 3.423,
+    "p999_ms": 12.859,
+    "max_ms": 55.54,
+    "read_p99_ms": 2.365,
+    "write_p99_ms": 5.714
   },
   "recovery_ms": 0,
   "recovery_after_heal_ms": 0,
   "disrupted_ms": 0,
-  "rejoin_ms": 1.8509999999987485,
+  "rejoin_ms": 1.3369999999995343,
   "degraded_p99_bound_ms": 50,
-  "started_at": "2026-11-13T17:46:42Z"
+  "started_at": "2026-11-13T18:12:04Z"
 }

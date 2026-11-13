@@ -336,7 +336,8 @@ var scenarios = []scenario{
 					return err
 				}
 				e.mark("reconnect", fmt.Sprintf("flap %d", i+1))
-				if !sleepCtx(ctx, time.Second) {
+				// The window may end during the last pause: the five flaps are done.
+				if !sleepCtx(ctx, time.Second) && i < 4 {
 					return ctx.Err()
 				}
 			}
@@ -555,6 +556,7 @@ type config struct {
 	rate, keys, concurrency     int
 	readRatio                   float64
 	pre, post, warmup           time.Duration
+	keepLogs                    string // if set, copy node logs here
 }
 
 func runOne(ctx context.Context, cfg config, sc scenario, run int) (*runResult, []bin, error) {
@@ -564,6 +566,18 @@ func runOne(ctx context.Context, cfg config, sc scenario, run int) (*runResult, 
 		return nil, nil, err
 	}
 	defer os.RemoveAll(dir)
+	if cfg.keepLogs != "" {
+		defer func() {
+			out := filepath.Join(cfg.keepLogs, sc.ID, fmt.Sprintf("run%d", run))
+			os.MkdirAll(out, 0o755)
+			logs, _ := filepath.Glob(filepath.Join(dir, "*.log"))
+			for _, l := range logs {
+				if b, err := os.ReadFile(l); err == nil {
+					os.WriteFile(filepath.Join(out, filepath.Base(l)), b, 0o644)
+				}
+			}
+		}()
+	}
 	c := newCluster(cfg.bin, dir, cfg.nodes, cfg.shards, cfg.rf, cfg.basePort, sc.Extra)
 	defer c.stopAll()
 	for _, p := range c.nodes {
@@ -798,6 +812,7 @@ func main() {
 	flag.StringVar(&names, "scenarios", "all", "comma-separated scenario IDs, or all")
 	flag.IntVar(&runs, "runs", 3, "repetitions per scenario")
 	flag.BoolVar(&list, "list", false, "list the scenarios and exit")
+	flag.StringVar(&cfg.keepLogs, "keep-logs", "", "copy each run's node logs into this directory")
 	flag.Parse()
 	log.SetFlags(log.Ltime)
 

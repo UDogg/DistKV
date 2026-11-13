@@ -101,7 +101,7 @@ study: build ## ⭐ Fault-injection study: 14 scenarios x 3 runs (RUNS=n to chan
 	bin/distkv-study --runs $(RUNS) --out study/results
 	$(MAKE) study-report
 
-study-quick: ## Fault-injection study with one run per scenario (~13 min)
+study-quick: ## Fault-injection study with one run per scenario (~14 min)
 	$(MAKE) study RUNS=1
 
 study-report: ## Plots and the PDF report from study/results (Python 3; installs study/requirements.txt in .venv-study)

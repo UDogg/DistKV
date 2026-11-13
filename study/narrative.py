@@ -6,6 +6,9 @@ depend on a result are guarded by checks in `claims()` so that a re-run
 with different outcomes fails loudly instead of printing stale prose."""
 
 
+OLD_CLIENT = "pause-leader-no-attempt-timeout"
+
+
 def build(meta, S, rows, runs, k):
     P, bullets, callout, figure, ms, pct = k["P"], k["bullets"], k["callout"], k["figure"], k["ms"], k["pct"]
     Table, TableStyle, Spacer, PageBreak, CondPageBreak = k["Table"], k["TableStyle"], k["Spacer"], k["PageBreak"], k["CondPageBreak"]
@@ -17,7 +20,8 @@ def build(meta, S, rows, runs, k):
     def g(sid, key, default=None):
         return S.get(sid, {}).get(key, default)
 
-    faults = [r for r in rows if r["id"] != "baseline"]
+    # The old-client pause is a before/after comparison, not a separate fault.
+    faults = [r for r in rows if r["id"] not in ("baseline", OLD_CLIENT)]
     n = len(faults)
     nruns = len(runs)
     total_ops = sum(r["overall"]["ops"] for r in runs)
@@ -56,6 +60,7 @@ def build(meta, S, rows, runs, k):
     A(callout([P("<b>The CV line</b> (filled in from these results)", "callout"), Spacer(1, 4),
                P(f"<i>{cv[0]}</i>", "callout")], bg=colors.HexColor("#fdf3e7"), edge=colors.HexColor("#edae49")))
     A(Spacer(1, 12))
+    A(PageBreak())
     glance = [["Cluster", f"{meta['nodes']} distkv processes, {meta['shards']} shards x {meta['replication']} replicas (multi-Raft), fsync on every commit"],
               ["Workload", f"open loop, {meta['rate']:,} ops/s, {int(meta['read_ratio'] * 100)}% linearizable reads, {meta['keys']:,} keys, 5 s deadline with retries"],
               ["Schedule", f"{meta['warmup_s']:.0f} s warm-up, {meta['pre_s']:.0f} s steady state, 10 s fault, {meta['post_s']:.0f} s observation"],
@@ -65,11 +70,10 @@ def build(meta, S, rows, runs, k):
     A(table(Table, TableStyle, colors, [["Setup", ""]] + glance, [1.1, 5.9], ss, header_bg=SOFT))
     A(Spacer(1, 10))
     A(P("<b>Reproduce everything</b> (results, figures and this PDF) with one command from the repository root:", "body"))
-    A(P("make study        # 13 scenarios x 3 runs, ~40 min, then plots + PDF", "code"))
+    A(P("make study        # 14 scenarios x 3 runs, ~40 min, then plots + PDF", "code"))
     A(P("Raw data: <font name='Mono'>study/results/</font> (one 100 ms timeline per run, a JSON summary per run, "
         "<font name='Mono'>summary.csv</font>). Harness: <font name='Mono'>cmd/distkv-study</font>. Figures: "
         "<font name='Mono'>study/plot.py</font>. This report: <font name='Mono'>study/report.py</font>.", "small"))
-    A(PageBreak())
 
     # ------------------------------------------------------------------ 1. why
     A(P("1. Why this study", "h1"))
@@ -130,7 +134,8 @@ def build(meta, S, rows, runs, k):
 
     # ------------------------------------------------------------------ 4. method
     A(P("4. Methodology", "h1"))
-    A(P("Each of the 13 scenarios (12 faults and a no-fault baseline) runs three times. Every run starts from "
+    A(P(f"Each of the {len(rows)} scenarios ({n} faults, the old-client comparison and a no-fault baseline) runs "
+        "three times. Every run starts from "
         "nothing: a fresh temporary directory, five new processes, a wait until the cluster has been fully "
         "healthy for 3 s, a preload of 20,000 keys, and another wait for leadership balancing to settle."))
     sched = [["Phase", "Length", "What happens"],
@@ -161,19 +166,28 @@ def build(meta, S, rows, runs, k):
         "is marked *.",
         "<b>Disrupted time</b>: total length of degraded 100 ms bins from injection on, including blips "
         "caused by the heal itself.",
-        "<b>Rejoin time</b>: from the heal until every node is ready again and every shard has a leader.",
+        "<b>Rejoin time</b>: from the heal until every node is ready again and every shard has a leader "
+        "(cluster status polled every 100 ms from a node the fault didn't touch).",
     ]))
     A(P("Each number is the <b>median of three runs</b>; ranges are shown where they matter.", "body"))
     A(P(f"<b>Environment.</b> One Linux VM with {meta['cpus']} vCPUs runs all five nodes and the load generator "
         f"({meta['go']}, {meta['os']}). Absolute latencies therefore include CPU and disk contention that "
         "separate machines wouldn't have; the differences between scenarios are the signal.", "body"))
+    A(P("<b>Threats to validity.</b> Three runs per scenario show the spread but are not enough for confidence "
+        "intervals. Times are resolved to 100 ms bins. Network faults act on Raft traffic between nodes only; "
+        "client-to-node links stay healthy. The victim is the busiest leader at injection time, which varies "
+        "between runs (5 to 11 shards), and the leader balancer keeps making its routine transfers during a "
+        "fault. One machine runs everything, so the absolute numbers are pessimistic for a real deployment and "
+        "optimistic for a cross-region one.", "body"))
 
     # ------------------------------------------------------------------ 5. results overview
     A(PageBreak())
     A(P("5. Results at a glance", "h1"))
-    A(P(f"Table 1 summarises all {len(rows)} scenarios. {len(masked)} of the {n} faults cost <b>zero</b> failed "
-        f"requests; their whole impact is latency. Only {len(lossy)} cost availability, and Section 6 shows why "
-        "each of those must."))
+    A(P(f"Table 1 summarises all {len(rows)} scenarios. With the fixed client, {len(masked)} of the {n} faults cost "
+        f"<b>zero</b> failed requests in every run; their whole impact is latency. The one exception, losing a "
+        f"majority, must cost availability (Section 6.2). Shaded rows lost requests; the "
+        f"<font name='Mono'>pause-leader (old client)</font> row is the same pause with the client as it was "
+        f"before this study, the bug the study found (Section 6.2)."))
     A(results_table(Table, TableStyle, colors, rows, ms, pct, ss, SOFT, CRASH))
     A(P("Fault-window availability is measured from injection to heal. p99 and p99.9 cover everything from "
         "injection to the end of the run. * means recovery was only possible after the heal (the system "
@@ -236,10 +250,10 @@ def build(meta, S, rows, runs, k):
         if s["id"] not in S:
             continue
         led = g(s["id"], "victim_shards_led")
-        cat_rows.append([s["id"], s["what"], "–" if not led else f"{led:.0f}"])
-    A(table(Table, TableStyle, colors, cat_rows, [1.45, 4.55, 1.0], ss, header_bg=SOFT, mono_first=True))
+        cat_rows.append([s["id"].replace("-no-attempt-timeout", "-no-attempt-<br/>timeout"), s["what"], "–" if not led else f"{led:.0f}"])
+    A(table(Table, TableStyle, colors, cat_rows, [1.95, 4.15, 0.9], ss, header_bg=SOFT, mono_first=True))
     A(P("Appendix B. Reproducing and extending", "h1"))
-    A(P("make study                     # everything: build, 39 runs, plots, this PDF\n"
+    A(P(f"make study                     # everything: build, {nruns} runs, plots, this PDF\n"
         "make study-quick               # one run per scenario\n"
         "bin/distkv-study --list        # scenario IDs\n"
         "bin/distkv-study --scenarios crash-leader,partition-minority --runs 5 --rate 5000\n"
@@ -292,7 +306,8 @@ def results_table(Table, TableStyle, colors, rows, ms, pct, ss, SOFT, CRASH):
         a = r["fault_availability"]
         av = "100%" if r["fault_errors"] == 0 else pct(a, 4 if a > 0.999 else 2)
         rec = ms(r["recovery_ms"]) + ("" if r["recovery_masked"] else "*")
-        cells = [f"<font name='Mono'>{r['id']}</font>", av, f"{r['impact_errors']:,.0f}", ms(r["impact_p99_ms"]),
+        label = "pause-leader (old client)" if r["id"] == OLD_CLIENT else r["id"]
+        cells = [f"<font name='Mono'>{label}</font>", av, f"{r['impact_errors']:,.0f}", ms(r["impact_p99_ms"]),
                  ms(r["impact_p999_ms"]), ms(r["impact_max_ms"]), rec, ms(r["disrupted_ms"]),
                  "–" if r["id"] == "baseline" else ms(r["rejoin_ms"])]
         data.append([Paragraph(c, ss["cell"]) for c in cells])
@@ -317,55 +332,51 @@ def _r(S, sid):
 
 
 def key_findings(S, g, ms, pct, masked, n):
-    out = []
-    crash = _r(S, "crash-leader")
-    if crash:
-        out.append(f"<b>A crashed leader costs latency, not requests.</b> SIGKILLing the node that leads "
-                   f"{crash['victim_shards_led']:.0f} of {len(S) and 24} shards caused "
-                   f"{'no' if crash['impact_errors'] == 0 else int(crash['impact_errors'])} failed requests; "
-                   f"clients were back to normal in {ms(crash['recovery_ms'])} (median), with p99.9 at "
-                   f"{ms(crash['impact_p999_ms'])} while the new leaders were elected.")
-    out.append(f"<b>{len(masked)} of {n} faults were fully masked</b>: zero failed requests across all their runs, "
-               "only a bounded latency spike.")
-    stop = _r(S, "stop-leader")
-    if stop and crash:
-        out.append(f"<b>Leadership transfer makes planned restarts nearly free.</b> A graceful stop of the same "
-                   f"node peaked at {ms(stop['impact_p999_ms'])} p99.9 versus {ms(crash['impact_p999_ms'])} for "
-                   f"a crash, and recovered in {ms(stop['recovery_ms'])} instead of {ms(crash['recovery_ms'])}.")
-    mino = _r(S, "partition-minority")
-    if mino:
-        out.append(f"<b>Losing a majority must cost availability, and only where it's lost.</b> Isolating two "
-                   f"nodes cut {mino['shards_without_quorum']:.0f} of 24 shards off from their quorum; those "
-                   f"refused requests (fault-window availability {pct(mino['fault_availability'], 1)}) while the "
-                   f"other shards kept serving, and service was normal {ms(mino['recovery_after_heal_ms'])} after "
-                   f"the heal.")
+    c, st, mino = _r(S, "crash-leader"), _r(S, "stop-leader"), _r(S, "partition-minority")
+    pa, pn = _r(S, "pause-leader"), _r(S, OLD_CLIENT)
     e250, e1000 = _r(S, "crash-leader-et250"), _r(S, "crash-leader-et1000")
-    if e250 and e1000 and crash:
-        out.append(f"<b>Recovery time is set by the election timeout.</b> Crash recovery went "
-                   f"{ms(e250['recovery_ms'])} → {ms(crash['recovery_ms'])} → {ms(e1000['recovery_ms'])} as the "
-                   f"timeout went 250 ms → 500 ms → 1 s.")
-    return out
+    s50 = _r(S, "slow-link-50ms")
+    return [
+        f"<b>{len(masked)} of {n} faults cost zero failed requests</b> in all three runs: crashes, pauses, leader "
+        f"and flapping partitions, slow and lossy links, graceful stops and a full rolling restart. Their whole "
+        f"impact was latency.",
+        f"<b>A crashed leader costs latency, not requests.</b> SIGKILLing the node that led "
+        f"{c['victim_shards_led']:.0f} of 24 shards failed nothing; clients were back to normal in "
+        f"{ms(c['recovery_ms'])}, with p99.9 at {ms(c['impact_p999_ms'])} while new leaders were elected.",
+        f"<b>Found and fixed a client bug.</b> A paused (SIGSTOP) leader failed "
+        f"{pct(1 - pn['fault_availability'], 1)} of requests for {ms(pn['recovery_ms'])}: its kernel still accepted "
+        f"connections, so requests waited out their whole deadline. A per-attempt timeout brought it to "
+        f"{pct(pa['fault_availability'], 0)} availability and {ms(pa['recovery_ms'])} recovery.",
+        f"<b>Recovery time is set by the election timeout:</b> {ms(e250['recovery_ms'])} → {ms(c['recovery_ms'])} → "
+        f"{ms(e1000['recovery_ms'])} as the timeout goes 250 ms → 500 ms → 1 s.",
+        f"<b>Only losing a majority costs availability, and only on the shards that lost it:</b> "
+        f"{mino['shards_without_quorum']:.0f} of 24 shards refused requests "
+        f"({pct(mino['fault_availability'], 1)} availability in the window) while the rest served normally.",
+        f"<b>Planned restarts are invisible:</b> leadership transfer kept a graceful stop at p99.9 "
+        f"{ms(st['impact_p999_ms'])} (crash: {ms(c['impact_p999_ms'])}). <b>Slow links slow writes, not reads:</b> "
+        f"+50 ms took write p99 to {ms(s50['fault_write_p99_ms'])} while lease-based reads stayed at "
+        f"{ms(s50['fault_read_p99_ms'])}.",
+    ]
 
 
 def cv_lines(S, g, ms, pct, n, masked, meta):
-    crash = _r(S, "crash-leader")
-    mino = _r(S, "partition-minority")
-    stop = _r(S, "stop-leader")
-    lines = [
-        f"Built a fault-injection harness for DistKV (multi-Raft KV store, Go) and evaluated Raft under {n} "
-        f"scenarios (crashes, pauses, partitions, slow and lossy links, rolling restarts), 3 runs each on a "
-        f"{meta['nodes']}-node cluster at {meta['rate']:,} ops/s: {len(masked)}/{n} faults caused zero failed "
-        f"requests, leader crashes recovered in {ms(crash.get('recovery_ms'))} (p99.9 "
-        f"{ms(crash.get('impact_p999_ms'))}), and only quorum loss cost availability.",
-        f"Evaluated Raft under injected partitions and node failures; measured p99 latency and recovery time "
-        f"across {n} scenarios, finding that leader crashes recover in {ms(crash.get('recovery_ms'))} with zero "
-        f"failed requests while recovery time scales with the election timeout.",
+    c, pa, pn = _r(S, "crash-leader"), _r(S, "pause-leader"), _r(S, OLD_CLIENT)
+    return [
+        f"Evaluated Raft under injected partitions, pauses and node failures; measured p99 latency and recovery "
+        f"time across {n} scenarios (3 runs each, {meta['rate']:,} ops/s, {meta['nodes']}-node cluster), finding "
+        f"{len(masked)}/{n} caused zero failed requests, leader crashes recovered in {ms(c['recovery_ms'])}, and a "
+        f"client gray-failure bug: a paused leader dropped availability to {pct(pn['fault_availability'], 0)} until "
+        f"a per-attempt timeout restored {pct(pa['fault_availability'], 0)} and cut recovery from "
+        f"{ms(pn['recovery_ms'])} to {ms(pa['recovery_ms'])}.",
+        f"Built a one-command fault-injection harness for DistKV (Go, multi-Raft) covering crashes, pauses, "
+        f"partitions, slow and lossy links and rolling restarts; {len(masked)} of {n} faults were fully masked, and "
+        f"recovery time tracked the election timeout ({ms(_r(S, 'crash-leader-et250')['recovery_ms'])} at 250 ms, "
+        f"{ms(_r(S, 'crash-leader-et1000')['recovery_ms'])} at 1 s).",
+        f"Found and fixed a gray-failure bug with fault injection: a frozen Raft leader cost "
+        f"{pct(1 - pn['fault_availability'], 1)} of requests and {ms(pn['recovery_ms'])} of recovery because "
+        f"clients waited on a socket that never answered; bounded per-attempt retries made it "
+        f"{pct(pa['fault_availability'], 0)} available with {ms(pa['recovery_ms'])} recovery.",
     ]
-    if stop and crash:
-        lines.append(f"Showed with one-command reproducible experiments that leadership transfer cuts the tail "
-                     f"latency of a planned restart from {ms(crash.get('impact_p999_ms'))} to "
-                     f"{ms(stop.get('impact_p999_ms'))} p99.9 compared with a crash.")
-    return lines
 
 
 def sections(S, g, ms, pct, P, bullets, figure, PageBreak, CondPageBreak, rec, avail):
@@ -389,15 +400,121 @@ def sections(S, g, ms, pct, P, bullets, figure, PageBreak, CondPageBreak, rec, a
 
 
 def crash_text(S, g, ms, pct, P, rec):
-    return [P("(written from the results)")]
+    c, st, rr = _r(S, "crash-leader"), _r(S, "stop-leader"), _r(S, "rolling-restart")
+    out = []
+    if c:
+        out.append(P(
+            f"<b>Crash (SIGKILL).</b> The victim led a median of {c['victim_shards_led']:.0f} shards. Their "
+            f"followers stopped hearing heartbeats, waited out the randomised election timeout and elected new "
+            f"leaders; the client found them through redirects. Requests to those shards stalled in the "
+            f"meantime, which is the latency spike in Figure 2 (p99.9 {ms(c['impact_p999_ms'])}, max "
+            f"{ms(c['impact_max_ms'])}), but <b>{'none' if c['impact_errors'] == 0 else int(c['impact_errors'])} "
+            f"failed</b>: retries absorbed the gap, and session sequence numbers kept every retried write "
+            f"exactly-once. Service was back to baseline after {ms(c['recovery_ms'])}. When the node restarted "
+            f"10 s later it replayed its write-ahead log and caught up; the cluster was fully healthy again "
+            f"{ms(c['rejoin_ms'])} after the restart."))
+    if st and c:
+        out.append(P(
+            f"<b>Graceful stop (SIGTERM).</b> The same kind of node, stopped politely, hands each leadership to an "
+            f"up-to-date follower (TimeoutNow) before it exits, so no shard waits for an election timeout. p99 "
+            f"after injection was {ms(st['impact_p99_ms'])} against {ms(st['baseline_p99_ms'])} at steady state, "
+            f"p99.9 {ms(st['impact_p999_ms'])} versus {ms(c['impact_p999_ms'])} for the crash, with "
+            f"{'no measurable disruption at all' if not st['disrupted_ms'] else ms(st['disrupted_ms']) + ' of disruption'}. "
+            f"This is the difference between a deploy and an outage, and it is entirely a property of the "
+            f"shutdown path."))
+    if rr:
+        out.append(P(
+            f"<b>Rolling restart.</b> Every node was stopped and restarted in turn, each time waiting for full "
+            f"health, as an upgrade would; all five were done within {ms(rr['fault_window_ms'])}. "
+            f"{'No request failed' if rr['impact_errors'] == 0 else str(int(rr['impact_errors'])) + ' requests failed'}, "
+            f"p99 stayed at {ms(rr['impact_p99_ms'])} and p99.9 at {ms(rr['impact_p999_ms'])}, indistinguishable "
+            f"from the baseline, and {'not one 100 ms bin was degraded' if not rr['disrupted_ms'] else ms(rr['disrupted_ms']) + ' was degraded'}: "
+            f"leadership transfer on the way down and leader balancing on the way up move work off and back on "
+            f"without a single election timeout."))
+    return out
 
 
 def partition_text(S, g, ms, pct, P, rec):
-    return [P("(written from the results)")]
+    pl, pm, pf = _r(S, "partition-leader"), _r(S, "partition-minority"), _r(S, "partition-flapping")
+    pa, pn = _r(S, "pause-leader"), _r(S, "pause-leader-no-attempt-timeout")
+    out = []
+    if pl:
+        out.append(P(
+            f"<b>Partitioned leader.</b> A leader cut off from its peers keeps running and keeps receiving client "
+            f"requests. Check-quorum demotes it once it has missed a majority of acknowledgements for an election "
+            f"timeout, and the majority side elects new leaders (pre-vote keeps the isolated node from disrupting "
+            f"them with ever-higher terms). Writes sent to it can't commit and reads can't renew its lease, so "
+            f"it answers with errors that send the client elsewhere. Result: "
+            f"{'no failed requests' if pl['impact_errors'] == 0 else str(int(pl['impact_errors'])) + ' failed requests'}, "
+            f"p99.9 {ms(pl['impact_p999_ms'])}, recovery {ms(pl['recovery_ms'])}, close to a crash: from the "
+            f"cluster's point of view the two are the same event."))
+    if pm:
+        out.append(P(
+            f"<b>Minority partition: the CP trade-off, measured.</b> Isolating the two busiest nodes left "
+            f"{pm['shards_without_quorum']:.0f} of 24 shards with only one reachable replica. Raft must not elect "
+            f"a leader there (one of three is not a majority), so those shards became unavailable, exactly as the "
+            f"theory requires; the other {24 - pm['shards_without_quorum']:.0f} shards failed over and kept "
+            f"serving. Those {pm['shards_without_quorum']:.0f} shards carry "
+            f"{pm['shards_without_quorum'] / 24:.1%} of the traffic, yet fault-window availability was "
+            f"{pct(pm['fault_availability'], 1)}: only about half of their requests failed. The client deadline "
+            f"explains it. Requests to the stranded shards fail after 5 s, so in Figure 3 failures stop 5 s into "
+            f"the partition; requests issued in its last 5 s were still waiting when it healed and succeeded late "
+            f"(hence the p99 of {ms(pm['impact_p99_ms'])}). Availability under quorum loss is therefore partly a "
+            f"choice of client timeout. "
+            f"Service was normal {ms(pm['recovery_after_heal_ms'])} after the heal, "
+            f"and the refusal is the guarantee working: a replica cut off from its majority cannot accept a write "
+            f"the majority hasn't seen, so the two sides can never diverge."))
+    if pf:
+        out.append(P(
+            f"<b>Flapping partition.</b> Isolating and reconnecting the leader every second, five times, is "
+            f"harder than a clean cut: each reconnection can trigger a new election, and the balancer wants to "
+            f"move leaders back. Pre-vote keeps a rejoining node from forcing elections with a stale term, and "
+            f"leadership settles on the stable majority. Result: "
+            f"{'no failed requests' if pf['impact_errors'] == 0 else str(int(pf['impact_errors'])) + ' failed requests'}, "
+            f"p99.9 {ms(pf['impact_p999_ms'])}, {ms(pf['disrupted_ms'])} of disrupted time over the 10 s of churn."))
+    if pa and pn:
+        out.append(P(
+            f"<b>Pause: the study's bug.</b> Freezing the leader with SIGSTOP looks like a crash to its peers "
+            f"(they re-elect within an election timeout), but not to clients: the paused process's kernel still "
+            f"accepts TCP connections, so requests sent to the cached leader neither fail nor return. With the "
+            f"original client, which let each attempt use the whole 5 s deadline, that cost "
+            f"<b>{pct(1 - pn['fault_availability'], 1)} of requests</b> in the fault window and "
+            f"<b>{ms(pn['recovery_ms'])}</b> of recovery, although Raft had recovered in under a second. The fix "
+            f"is a per-attempt timeout (1 s by default): a hung node now costs one attempt, the client forgets "
+            f"the cached leader and retries another replica, and writes stay exactly-once through their session "
+            f"sequence numbers. With it the same fault caused "
+            f"{'no failed requests' if pa['impact_errors'] == 0 else str(int(pa['impact_errors'])) + ' failed requests'} "
+            f"and recovered in {ms(pa['recovery_ms'])}; its p99.9 of {ms(pa['impact_p999_ms'])} is that one "
+            f"timed-out attempt. Leader leases are what make the pause safe at all: the "
+            f"new leader may not serve reads until the old lease has expired, so when the frozen node wakes up "
+            f"it cannot serve a stale read from a lease it no longer holds."))
+    return out
 
 
 def slow_text(S, g, ms, pct, P, rec):
-    return [P("(written from the results)")]
+    s50, s200, lo = _r(S, "slow-link-50ms"), _r(S, "slow-link-200ms"), _r(S, "lossy-link-30")
+    out = []
+    if s50 and s200:
+        out.append(P(
+            f"<b>Slow links slow writes, not reads.</b> Delaying the leader's Raft messages adds the delay to "
+            f"every commit round trip, so writes on its shards slow down for the whole fault: write p99 was "
+            f"{ms(s50['fault_write_p99_ms'])} with +50 ms and {ms(s200['fault_write_p99_ms'])} with +200 ms, about "
+            f"twice the injected delay (most likely because a delayed send also holds back the next batch to the "
+            f"same follower). Reads were untouched ({ms(s50['fault_read_p99_ms'])} and {ms(s200['fault_read_p99_ms'])} "
+            f"p99): a leader holding a valid lease answers linearizable reads without asking its peers. Nothing "
+            f"failed, and the delay never caused a failover: heartbeats that are 200 ms late still arrive inside "
+            f"the 500 ms election timeout. To check that rather than infer it, one run of each slow and lossy "
+            f"scenario was repeated with <font name='Mono'>--keep-logs</font>: the server logs show no step-down "
+            f"and no timeout-driven election during the fault; the only leadership changes were the leader "
+            f"balancer's routine transfers (one or two per run), which would have happened anyway. A slow leader is not a dead leader, so the degradation lasts exactly as "
+            f"long as the fault (the * recovery in Table 1). Detecting a slow leader and moving leadership away "
+            f"is a policy Raft leaves to the operator."))
+    if lo:
+        out.append(P(
+            f"<b>Lossy links.</b> Dropping 30% of the leader's Raft messages is absorbed by retransmission and "
+            f"pipelining: {'no failed requests' if lo['impact_errors'] == 0 else str(int(lo['impact_errors'])) + ' failed requests'}, "
+            f"write p99 {ms(lo['fault_write_p99_ms'])} in the window, p99.9 {ms(lo['impact_p999_ms'])} overall."))
+    return out
 
 
 def election(S, g, ms, P, figure, CondPageBreak):
@@ -407,13 +524,100 @@ def election(S, g, ms, P, figure, CondPageBreak):
     out += figure("election_timeout.png", caption="Figure 5. Crash of the busiest leader at three election "
                                                    "timeouts: recovery time and p99.9 latency (dots: runs; line: "
                                                    "median; dashed: y = timeout).")
-    out += [P("(written from the results)")]
+    e250, e500, e1000 = _r(S, "crash-leader-et250"), _r(S, "crash-leader"), _r(S, "crash-leader-et1000")
+    if e250 and e500 and e1000:
+        out.append(P(
+            f"Recovery from a crash is dominated by one parameter. Halving the election timeout to 250 ms cut "
+            f"recovery to {ms(e250['recovery_ms'])} and p99.9 to {ms(e250['impact_p999_ms'])}; doubling it to "
+            f"1 s raised them to {ms(e1000['recovery_ms'])} and {ms(e1000['impact_p999_ms'])}. Recovery is roughly "
+            f"one to two timeouts: followers wait a randomised timeout before campaigning, and the client needs a "
+            f"round of redirects to find the new leader. None of the three settings failed a request."))
+        out.append(P(
+            "Why not always use a short timeout? Because a timeout is also the bar a healthy leader must clear. "
+            "A GC pause, an fsync stall or a congested link longer than the timeout triggers a needless election, "
+            "and on a loaded machine that happens more often the lower the bar. The defaults here (500 ms "
+            "elections, 50 ms heartbeats) sit between the two; a deployment on dedicated hardware with a fast "
+            "network could go lower, one spanning regions must go higher. The +200 ms slow-link scenario shows "
+            "the other side of the trade: write latency rose to about 400 ms without a failover, because late "
+            "heartbeats still beat the 500 ms timeout. A 250 ms timeout would have turned that slowness into "
+            "repeated elections."))
     return out
 
 
 def lessons(S, g, ms, pct, masked, n):
-    return ["(written from the results)"]
+    c, st, pm = _r(S, "crash-leader"), _r(S, "stop-leader"), _r(S, "partition-minority")
+    pa, pn = _r(S, "pause-leader"), _r(S, "pause-leader-no-attempt-timeout")
+    out = [
+        f"<b>Raft masks single-node failures; clients see latency, not errors.</b> {len(masked)} of {n} faults "
+        f"cost zero failed requests over three runs each. The price is a tail-latency spike bounded by the "
+        f"election timeout ({ms(c.get('impact_p999_ms'))} p99.9 for a crashed leader).",
+        "<b>Availability is lost only where a majority is lost, and then it must be.</b> The minority partition "
+        f"made {pm.get('shards_without_quorum', 0):.0f} shards refuse requests and left the rest untouched: "
+        "consistency over availability, scoped to the affected shards thanks to multi-Raft.",
+        f"<b>Recovery time is a tunable, not a constant.</b> It tracks the election timeout almost linearly; "
+        f"choosing the timeout is choosing between failover speed and false elections.",
+        f"<b>Planned operations should never look like failures.</b> Leadership transfer made a graceful stop "
+        f"nearly invisible (p99.9 {ms(st.get('impact_p999_ms'))} versus {ms(c.get('impact_p999_ms'))} for a crash), "
+        f"and a full rolling restart failed no requests.",
+    ]
+    if pa and pn:
+        out.append(
+            f"<b>The weakest link was the client, not the consensus.</b> A paused leader cost "
+            f"{pct(1 - pn['fault_availability'], 1)} of requests and {ms(pn['recovery_ms'])} because the client "
+            f"waited on a node that accepted connections but never answered. Raft had already recovered. A "
+            f"per-attempt timeout fixed it ({pct(pa['fault_availability'], 1)} available, {ms(pa['recovery_ms'])} "
+            f"recovery). Gray failures (slow, frozen, half-alive nodes) are what end-to-end fault injection "
+            f"finds and unit tests don't.")
+    out.append("<b>Slow is not dead.</b> Slow and lossy links never triggered a timeout-driven election "
+               "(checked in the server logs); they cost write latency on the leader's shards. Detecting a slow leader and moving leadership away is a policy Raft leaves "
+               "to the operator.")
+    return out
 
 
 def interview(S, g, ms, pct, meta):
-    return [("(written from the results)", "")]
+    c, st, pm, pl = _r(S, "crash-leader"), _r(S, "stop-leader"), _r(S, "partition-minority"), _r(S, "partition-leader")
+    pa, pn = _r(S, "pause-leader"), _r(S, "pause-leader-no-attempt-timeout")
+    e250, e1000 = _r(S, "crash-leader-et250"), _r(S, "crash-leader-et1000")
+    return [
+        ("What happens to in-flight requests when a Raft leader crashes?",
+         f"Followers stop receiving heartbeats, wait a randomised election timeout and elect a new leader among "
+         f"the up-to-date replicas. In-flight requests to the dead leader fail at the transport level and are "
+         f"retried; in my measurements nothing failed and clients were back to normal in "
+         f"{ms(c.get('recovery_ms'))}, with p99.9 at {ms(c.get('impact_p999_ms'))} during the election. Writes "
+         f"that may have committed before the crash are retried with the same session sequence number, so they "
+         f"apply exactly once."),
+        ("How do you avoid stale reads from an old leader after a partition?",
+         "Two mechanisms. Check-quorum makes a leader that can't reach a majority step down. Leader leases make "
+         "a new leader wait until the old leader's lease must have expired before serving lease-based reads; "
+         "otherwise reads go through ReadIndex, which confirms leadership with a heartbeat round. The pause "
+         "scenario is the sharpest test: a frozen leader wakes up believing it still leads, and its lease has "
+         "already run out."),
+        ("What does CAP mean in practice for your system?",
+         f"DistKV is CP per shard. When I isolated two of five nodes, the {pm.get('shards_without_quorum', 0):.0f} "
+         f"shards that had two replicas on that side refused requests (availability "
+         f"{pct(pm.get('fault_availability'), 1)} in that window) rather than risk divergence; the other shards "
+         f"kept serving. Sharding into many Raft groups limits the blast radius of losing quorum."),
+        ("How would you choose the election timeout?",
+         f"From measurements: recovery went from {ms(e250.get('recovery_ms'))} at 250 ms to "
+         f"{ms(e1000.get('recovery_ms'))} at 1 s. Lower is faster failover but more false elections from GC "
+         f"pauses, fsync stalls or network jitter; it should comfortably exceed the p99.9 of heartbeat round trips "
+         f"on the real network, and spread across a randomised range to avoid split votes."),
+        ("What was the most interesting thing you found?",
+         f"A bug in the client, not in Raft. A SIGSTOPped leader failed {pct(1 - pn.get('fault_availability', 1), 1)} "
+         f"of requests for {ms(pn.get('recovery_ms'))} because its kernel still accepted connections and every "
+         f"request waited out its 5 s deadline. A per-attempt timeout that forgets the hung node fixed it: "
+         f"{pct(pa.get('fault_availability'), 1)} availability and {ms(pa.get('recovery_ms'))} recovery."),
+        ("How did you make the measurements trustworthy?",
+         f"Open-loop load at a fixed {meta['rate']:,} ops/s, with latency measured from each request's scheduled "
+         f"start so requests that queued behind a stall count (no coordinated omission). Every run starts a fresh "
+         f"cluster, every scenario runs three times and I report medians with ranges, and a no-fault baseline on "
+         f"the same schedule gives the noise floor. Everything reruns with one command."),
+        ("Why is a graceful shutdown so much cheaper than a crash?",
+         f"On SIGTERM the node transfers each leadership to an up-to-date follower and tells it to campaign "
+         f"immediately (TimeoutNow), so nobody waits for an election timeout. p99.9 was {ms(st.get('impact_p999_ms'))} "
+         f"versus {ms(c.get('impact_p999_ms'))} for a crash of the same node."),
+        ("What would you test next?",
+         "Disk faults (fsync errors, full disks, torn writes), asymmetric partitions where A reaches B but not "
+         "the reverse, clock skew against the lease logic, membership changes under load, and the leaderless "
+         "comparison in Section 9, with the linearizability checker counting the anomalies each mode allows."),
+    ]

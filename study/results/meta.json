@@ -3,7 +3,7 @@
   "concurrency": 16384,
   "cpus": 4,
   "fsync": true,
-  "git_commit": "c08b492",
+  "git_commit": "9051ffa",
   "go": "go1.24.7",
   "keys": 20000,
   "nodes": 5,
@@ -18,6 +18,7 @@
   "scenarios": [
     {
       "category": "baseline",
+      "client_attempt_timeout_s": 0,
       "extra_flags": null,
       "hold_s": 10,
       "id": "baseline",
@@ -26,6 +27,7 @@
     },
     {
       "category": "crash",
+      "client_attempt_timeout_s": 0,
       "extra_flags": null,
       "hold_s": 10,
       "id": "crash-leader",
@@ -34,6 +36,7 @@
     },
     {
       "category": "crash",
+      "client_attempt_timeout_s": 0,
       "extra_flags": [
         "--election-timeout",
         "250ms",
@@ -47,6 +50,7 @@
     },
     {
       "category": "crash",
+      "client_attempt_timeout_s": 0,
       "extra_flags": [
         "--election-timeout",
         "1s",
@@ -60,6 +64,7 @@
     },
     {
       "category": "crash",
+      "client_attempt_timeout_s": 0,
       "extra_flags": null,
       "hold_s": 10,
       "id": "stop-leader",
@@ -68,6 +73,7 @@
     },
     {
       "category": "slow",
+      "client_attempt_timeout_s": 0,
       "extra_flags": null,
       "hold_s": 10,
       "id": "pause-leader",
@@ -75,7 +81,17 @@
       "what": "Freeze the process for 10 s (a long GC pause or a stalled VM), then SIGCONT. Its leases must lapse before others take over."
     },
     {
+      "category": "slow",
+      "client_attempt_timeout_s": -1e-9,
+      "extra_flags": null,
+      "hold_s": 10,
+      "id": "pause-leader-no-attempt-timeout",
+      "title": "Pause, client without a per-attempt timeout",
+      "what": "As pause-leader with the client's per-attempt timeout disabled, as it was before this study: each request waits on the frozen leader for its whole 5 s deadline."
+    },
+    {
       "category": "partition",
+      "client_attempt_timeout_s": 0,
       "extra_flags": null,
       "hold_s": 10,
       "id": "partition-leader",
@@ -84,6 +100,7 @@
     },
     {
       "category": "partition",
+      "client_attempt_timeout_s": 0,
       "extra_flags": null,
       "hold_s": 10,
       "id": "partition-minority",
@@ -92,6 +109,7 @@
     },
     {
       "category": "partition",
+      "client_attempt_timeout_s": 0,
       "extra_flags": null,
       "hold_s": 10,
       "id": "partition-flapping",
@@ -100,6 +118,7 @@
     },
     {
       "category": "slow",
+      "client_attempt_timeout_s": 0,
       "extra_flags": null,
       "hold_s": 10,
       "id": "slow-link-50ms",
@@ -108,6 +127,7 @@
     },
     {
       "category": "slow",
+      "client_attempt_timeout_s": 0,
       "extra_flags": null,
       "hold_s": 10,
       "id": "slow-link-200ms",
@@ -116,6 +136,7 @@
     },
     {
       "category": "slow",
+      "client_attempt_timeout_s": 0,
       "extra_flags": null,
       "hold_s": 10,
       "id": "lossy-link-30",
@@ -124,6 +145,7 @@
     },
     {
       "category": "crash",
+      "client_attempt_timeout_s": 0,
       "extra_flags": null,
       "hold_s": 45,
       "id": "rolling-restart",
@@ -132,6 +154,6 @@
     }
   ],
   "shards": 24,
-  "started_at": "2026-11-13T17:44:57Z",
+  "started_at": "2026-11-13T18:48:55Z",
   "warmup_s": 5
 }

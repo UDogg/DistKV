@@ -99,6 +99,7 @@ def summary(order, by, catalog):
             "disrupted_ms": med([r["disrupted_ms"] for r in rs]),
             "disrupted_range": rng([r["disrupted_ms"] for r in rs]),
             "rejoin_ms": med([r["rejoin_ms"] for r in rs if r["rejoin_ms"] >= 0]),
+            "fault_window_ms": med([r["heal_ms"] - r["inject_ms"] for r in rs]),
             "errors": [r.get("error") for r in rs if r.get("error")],
         }
         rows.append(row)
@@ -108,6 +109,8 @@ def summary(order, by, catalog):
 def fmt_ms(v):
     if v is None:
         return "–"
+    if v == 0:
+        return "0 ms"
     return f"{v / 1000:.2f} s" if v >= 1000 else f"{v:.0f} ms" if v >= 10 else f"{v:.1f} ms"
 
 
@@ -146,7 +149,8 @@ def timeline_grid(order, by, catalog, ids, path, cols=2):
                plt.Line2D([0], [0], color=P99, lw=1), plt.Rectangle((0, 0), 1, 1, color="#999", alpha=0.25)]
     fig.legend(handles, ["successful ops/s", "failed ops/s", "p99 latency per 100 ms (log)", "fault window"],
                loc="upper center", ncol=4, bbox_to_anchor=(0.5, 1.0))
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    height = 1.95 * rows
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.38 / height))
     fig.savefig(path)
     plt.close(fig)
 

@@ -1,18 +1,47 @@
 # Raft fault-injection study
 
 A reproducible study of how DistKV's Raft implementation behaves under injected faults:
-**availability, tail latency and recovery time** across 13 fault scenarios plus a no-fault baseline,
+**availability, tail latency and recovery time** across 12 fault scenarios (plus an old-client comparison and a no-fault baseline),
 each repeated three times on a fresh 5-node cluster of real `distkv` processes.
 
 📄 **Report:** [raft-fault-injection-study.pdf](raft-fault-injection-study.pdf) ·
 📊 **Data:** [results/](results/) (`summary.csv`, `runs.json`, one `bins.csv` timeline per run) ·
 🖼 **Figures:** [results/figures/](results/figures/)
 
+## Headline results
+
+Medians of 3 runs, 5 nodes, 24 shards, 3,000 ops/s ([full report](raft-fault-injection-study.pdf)):
+
+| Scenario | Failed requests | Availability (fault window) | p99.9 after injection | Recovery |
+|---|---:|---:|---:|---:|
+| `crash-leader` | 0 | 100% | 759 ms | 796 ms |
+| `crash-leader-et250` | 0 | 100% | 302 ms | 397 ms |
+| `crash-leader-et1000` | 0 | 100% | 1.48 s | 1.60 s |
+| `stop-leader` | 0 | 100% | 14 ms | 0 ms |
+| `pause-leader` | 0 | 100% | 1.01 s | 1.10 s |
+| `pause-leader (old client)` | 3,240 | 89.2% | 4.85 s | 8.50 s |
+| `partition-leader` | 0 | 100% | 264 ms | 898 ms |
+| `partition-minority` | 5,548 | 81.5% | 4.93 s | 10.50 s * |
+| `partition-flapping` | 0 | 100% | 493 ms | 896 ms |
+| `slow-link-50ms` | 0 | 100% | 99 ms | 10.00 s * |
+| `slow-link-200ms` | 0 | 100% | 393 ms | 10.10 s * |
+| `lossy-link-30` | 0 | 100% | 52 ms | 0 ms |
+| `rolling-restart` | 0 | 100% | 15 ms | 0 ms |
+
+\* the system cannot mask the fault (lost quorum, or a slow but alive leader); recovery includes the 10 s fault window.
+
+* **11 of 12 faults cost zero failed requests**; their impact is a bounded latency spike.
+* **Crash recovery tracks the election timeout**: 397 ms / 796 ms / 1.60 s at 250 ms / 500 ms / 1 s.
+* **Only quorum loss costs availability**, and only on the 9 shards that lost it.
+* **The study found a client bug.** A paused leader (SIGSTOP) failed 10.8% of requests for 8.50 s:
+  its kernel still accepted connections, so requests waited out their deadline. A per-attempt timeout in
+  the Go client (`Config.AttemptTimeout`, default 1 s) fixed it: 100% availability, 1.10 s recovery.
+
 ## One command
 
 ```bash
 make study          # 14 scenarios x 3 runs (~40 min), then plots and the PDF
-make study-quick    # one run per scenario (~13 min)
+make study-quick    # one run per scenario (~14 min)
 make study-report   # re-plot and rebuild the PDF from existing results
 ```
 
