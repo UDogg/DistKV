@@ -19,3 +19,5 @@ dist-pages/
 
 # Fault-injection study tooling
 .venv-study/
+
+__pycache__/
