@@ -97,7 +97,7 @@ polyglot: sdk-python sdk-typescript sdk-rust ## All non-Go tests (SDKs, dashboar
 RUNS ?= 3
 STUDY_PY := .venv-study/bin/python
 
-study: build ## ⭐ Fault-injection study: 13 scenarios x 3 runs (RUNS=n to change) on a real 5-node cluster (~40 min) + plots + PDF
+study: build ## ⭐ Fault-injection study: 14 scenarios x 3 runs (RUNS=n to change) on a real 5-node cluster (~40 min) + plots + PDF
 	bin/distkv-study --runs $(RUNS) --out study/results
 	$(MAKE) study-report
 

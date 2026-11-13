@@ -259,6 +259,9 @@ type scenario struct {
 	Victims  int           // how many of the busiest leaders to target
 	Hold     time.Duration // fault window
 	Extra    []string      // extra distkv flags (e.g. election timeout)
+	// AttemptTimeout overrides the client's per-attempt timeout (negative
+	// disables it, as the client behaved before it existed).
+	AttemptTimeout time.Duration
 	// Inject applies the fault; Heal undoes it at the end of Hold. A nil
 	// Heal with a non-nil Run means Run drives the whole window itself.
 	Inject, Heal func(e *env) error
@@ -307,6 +310,11 @@ var scenarios = []scenario{
 		What:   "Freeze the process for 10 s (a long GC pause or a stalled VM), then SIGCONT. Its leases must lapse before others take over.",
 		Inject: eachVictim(func(e *env, p *proc) error { return e.c.signal(p, syscall.SIGSTOP) }),
 		Heal:   eachVictim(func(e *env, p *proc) error { return e.c.signal(p, syscall.SIGCONT) })},
+	{ID: "pause-leader-no-attempt-timeout", Category: "slow", Title: "Pause, client without a per-attempt timeout", Victims: 1, Hold: 10 * time.Second,
+		AttemptTimeout: -1,
+		What:           "As pause-leader with the client's per-attempt timeout disabled, as it was before this study: each request waits on the frozen leader for its whole 5 s deadline.",
+		Inject:         eachVictim(func(e *env, p *proc) error { return e.c.signal(p, syscall.SIGSTOP) }),
+		Heal:           eachVictim(func(e *env, p *proc) error { return e.c.signal(p, syscall.SIGCONT) })},
 	{ID: "partition-leader", Category: "partition", Title: "Partition the busiest leader", Victims: 1, Hold: 10 * time.Second,
 		What:   "Cut the leader off from all peers for 10 s (clients can still reach it). Check-quorum must demote it and the majority elect replacements.",
 		Inject: setFaults(api.Faults{Isolated: true}), Heal: setFaults(noFaults)},
@@ -570,7 +578,7 @@ func runOne(ctx context.Context, cfg config, sc scenario, run int) (*runResult, 
 	for _, p := range c.nodes {
 		eps = append(eps, p.addr)
 	}
-	cl, err := client.New(ctx, client.Config{Endpoints: eps})
+	cl, err := client.New(ctx, client.Config{Endpoints: eps, AttemptTimeout: sc.AttemptTimeout})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -827,7 +835,8 @@ func main() {
 	}
 	var catalog []map[string]any
 	for _, s := range scenarios {
-		catalog = append(catalog, map[string]any{"id": s.ID, "category": s.Category, "title": s.Title, "what": s.What, "hold_s": s.Hold.Seconds(), "extra_flags": s.Extra})
+		catalog = append(catalog, map[string]any{"id": s.ID, "category": s.Category, "title": s.Title, "what": s.What, "hold_s": s.Hold.Seconds(), "extra_flags": s.Extra,
+			"client_attempt_timeout_s": s.AttemptTimeout.Seconds()})
 	}
 	meta["scenarios"] = catalog
 	if err := writeJSON(filepath.Join(cfg.out, "meta.json"), meta); err != nil {

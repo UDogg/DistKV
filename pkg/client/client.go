@@ -69,6 +69,15 @@ type Config struct {
 	Endpoints []string
 	// Timeout applies to operations whose context has no deadline.
 	Timeout time.Duration
+	// AttemptTimeout bounds each attempt of an operation (default 1 s;
+	// negative disables it). A node that accepts connections but never
+	// answers, such as a paused or wedged process, would otherwise hold an
+	// operation for its whole deadline while the rest of the cluster has
+	// already elected a new leader; with a bound the client gives up on
+	// that node and retries another replica. Keep it above the election
+	// timeout: a healthy leader can legitimately take that long to answer
+	// during a leadership change.
+	AttemptTimeout time.Duration
 	// DisableSmartRouting sends every request to the seed endpoints and
 	// lets servers forward it. Use when member addresses advertised by the
 	// servers are not reachable from the client (e.g. behind NAT).
@@ -120,6 +129,9 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 5 * time.Second
+	}
+	if cfg.AttemptTimeout == 0 {
+		cfg.AttemptTimeout = time.Second
 	}
 	c := &Client{cfg: cfg, http: cfg.HTTPClient, leaders: map[cluster.ShardID]string{}}
 	if c.http == nil {
@@ -343,14 +355,20 @@ func (c *Client) do(ctx context.Context, method, key string, q url.Values, body 
 
 	var lastErr error
 	redirects := 0
+	hung := "" // a node whose last attempt timed out without an answer
 	for attempt := 0; ; attempt++ {
 		base := c.pickTarget(shard, attempt, anyReplica)
+		if base == hung {
+			base = c.pickTarget(shard, attempt+1, anyReplica)
+		}
 		var rd io.Reader
 		if body != nil {
 			rd = bytes.NewReader(body)
 		}
-		req, err := http.NewRequestWithContext(ctx, method, base+path, rd)
+		actx, acancel := c.attemptContext(ctx)
+		req, err := http.NewRequestWithContext(actx, method, base+path, rd)
 		if err != nil {
+			acancel()
 			return nil, err
 		}
 		if !c.cfg.DisableSmartRouting {
@@ -364,6 +382,10 @@ func (c *Client) do(ctx context.Context, method, key string, q url.Values, body 
 
 		hresp, err := c.http.Do(req)
 		if err != nil {
+			if ctx.Err() == nil && errors.Is(actx.Err(), context.DeadlineExceeded) {
+				hung = base
+			}
+			acancel()
 			lastErr = err
 			c.forgetLeader(shard, base)
 			if ctx.Err() != nil {
@@ -381,6 +403,7 @@ func (c *Client) do(ctx context.Context, method, key string, q url.Values, body 
 		}
 		data, err := transport.ReadBody(hresp.Body, hresp.ContentLength, 64<<20)
 		hresp.Body.Close()
+		acancel()
 		if err != nil {
 			lastErr = err
 			if !sleep(ctx, backoff(attempt)) {
@@ -429,6 +452,14 @@ func (c *Client) do(ctx context.Context, method, key string, q url.Values, body 
 		lastErr = ctx.Err()
 	}
 	return nil, fmt.Errorf("%w: %v", ErrUnavailable, lastErr)
+}
+
+// attemptContext bounds one attempt by AttemptTimeout (and by ctx).
+func (c *Client) attemptContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if c.cfg.AttemptTimeout < 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, c.cfg.AttemptTimeout)
 }
 
 // pickTarget chooses the node to contact for shard.

@@ -1,7 +1,7 @@
 # Raft fault-injection study
 
 A reproducible study of how DistKV's Raft implementation behaves under injected faults:
-**availability, tail latency and recovery time** across 12 fault scenarios plus a no-fault baseline,
+**availability, tail latency and recovery time** across 13 fault scenarios plus a no-fault baseline,
 each repeated three times on a fresh 5-node cluster of real `distkv` processes.
 
 📄 **Report:** [raft-fault-injection-study.pdf](raft-fault-injection-study.pdf) ·
@@ -11,7 +11,7 @@ each repeated three times on a fresh 5-node cluster of real `distkv` processes.
 ## One command
 
 ```bash
-make study          # 13 scenarios x 3 runs (~40 min), then plots and the PDF
+make study          # 14 scenarios x 3 runs (~40 min), then plots and the PDF
 make study-quick    # one run per scenario (~13 min)
 make study-report   # re-plot and rebuild the PDF from existing results
 ```
@@ -40,6 +40,7 @@ in a local virtualenv (`matplotlib`, `reportlab`). Run a subset with
 | `crash-leader-et250` / `-et1000` | the same with a 250 ms / 1 s election timeout |
 | `stop-leader` | `SIGTERM` (leadership transfer before exit); restart 10 s later |
 | `pause-leader` | `SIGSTOP` for 10 s, then `SIGCONT` (a GC pause or a frozen VM) |
+| `pause-leader-no-attempt-timeout` | the same, with the client's per-attempt timeout disabled (the client before this study) |
 | `partition-leader` | isolate the leader from all peers for 10 s |
 | `partition-minority` | isolate the two busiest leaders: shards with 2 of 3 replicas there lose quorum |
 | `partition-flapping` | isolate/reconnect the leader every second, five times |

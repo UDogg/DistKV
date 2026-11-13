@@ -247,7 +247,8 @@ def main():
 
     groups = {
         "timelines_crash.png": ["baseline", "crash-leader", "stop-leader", "rolling-restart", "crash-leader-et250", "crash-leader-et1000"],
-        "timelines_partition.png": ["partition-leader", "partition-minority", "partition-flapping", "pause-leader"],
+        "timelines_partition.png": ["partition-leader", "partition-minority", "partition-flapping", "pause-leader",
+                                    "pause-leader-no-attempt-timeout"],
         "timelines_slow.png": ["slow-link-50ms", "slow-link-200ms", "lossy-link-30"],
     }
     for name, ids in groups.items():
