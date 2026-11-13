@@ -13,6 +13,7 @@ from datetime import date
 from pathlib import Path
 
 import matplotlib
+from reportlab import rl_config
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import letter
@@ -22,6 +23,9 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (CondPageBreak, Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer,
                                 Table, TableStyle)
+
+# Byte-identical output for identical results: no timestamps or random IDs.
+rl_config.invariant = 1
 
 RESULTS = Path(sys.argv[1] if len(sys.argv) > 1 else "study/results")
 OUT = Path(sys.argv[2] if len(sys.argv) > 2 else RESULTS.parent / "raft-fault-injection-study.pdf")

@@ -686,7 +686,7 @@ endobj
 endobj
 43 0 obj
 <<
-/Author (DistKV) /CreationDate (D:20261113185837+00'00') /Creator (\(unspecified\)) /Keywords () /ModDate (D:20261113185837+00'00') /Producer (ReportLab PDF Library - \(opensource\)) 
+/Author (DistKV) /CreationDate (D:20000101000000+00'00') /Creator (\(unspecified\)) /Keywords () /ModDate (D:20000101000000+00'00') /Producer (ReportLab PDF Library - \(opensource\)) 
   /Subject (Availability, tail latency and recovery time of Raft under injected faults) /Title (Raft fault-injection study on DistKV) /Trapped /False
 >>
 endobj
@@ -858,7 +858,7 @@ xref
 trailer
 <<
 /ID 
-[<f4263cebecf608e483d7ea89bc9c0c78><f4263cebecf608e483d7ea89bc9c0c78>]
+[<d8c000d5a0d3bd3a53eb231323a29184><d8c000d5a0d3bd3a53eb231323a29184>]
 % ReportLab generated PDF document -- digest (opensource)
 
 /Info 43 0 R
