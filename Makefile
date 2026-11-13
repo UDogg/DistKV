@@ -7,7 +7,7 @@ LDFLAGS := -s -w \
 	-X github.com/UDogg/DistKV/internal/version.Commit=$(COMMIT)
 IMAGE   ?= distkv:$(VERSION)
 
-.PHONY: all build test test-short race chaos bench fuzz lint fmt vet cover cluster cluster-stop docker compose-up compose-down clean help demo docker-demo ui ui-pages polyglot sdk-python sdk-typescript sdk-rust top vectors
+.PHONY: study study-quick study-report all build test test-short race chaos bench fuzz lint fmt vet cover cluster cluster-stop docker compose-up compose-down clean help demo docker-demo ui ui-pages polyglot sdk-python sdk-typescript sdk-rust top vectors
 
 all: lint test build ## Lint, test and build
 
@@ -93,6 +93,21 @@ sdk-rust: ## Rust crate tests, fmt and clippy
 
 polyglot: sdk-python sdk-typescript sdk-rust ## All non-Go tests (SDKs, dashboard type-check)
 	npm ci --prefix web/dashboard --silent && npm run typecheck --prefix web/dashboard
+
+RUNS ?= 3
+STUDY_PY := .venv-study/bin/python
+
+study: build ## ⭐ Fault-injection study: 13 scenarios x 3 runs (RUNS=n to change) on a real 5-node cluster (~40 min) + plots + PDF
+	bin/distkv-study --runs $(RUNS) --out study/results
+	$(MAKE) study-report
+
+study-quick: ## Fault-injection study with one run per scenario (~13 min)
+	$(MAKE) study RUNS=1
+
+study-report: ## Plots and the PDF report from study/results (Python 3; installs study/requirements.txt in .venv-study)
+	test -x $(STUDY_PY) || (python3 -m venv .venv-study && $(STUDY_PY) -m pip install -q -r study/requirements.txt)
+	$(STUDY_PY) study/plot.py study/results
+	$(STUDY_PY) study/report.py study/results study/raft-fault-injection-study.pdf
 
 clean: ## Remove build output and local cluster data
 	rm -rf bin dist dist-pages coverage.out .demo clients/rust/target clients/typescript/dist clients/typescript/build
