@@ -1,0 +1,132 @@
+{
+  "scenario": "rolling-restart",
+  "run": 1,
+  "victims": null,
+  "victim_shards_led": null,
+  "shards": 24,
+  "shards_without_quorum": 0,
+  "inject_ms": 10002.832,
+  "heal_ms": 18561.173,
+  "end_ms": 75000,
+  "events": [
+    {
+      "t_ms": 10002.832,
+      "kind": "inject"
+    },
+    {
+      "t_ms": 10015.298,
+      "kind": "stop",
+      "detail": "n1"
+    },
+    {
+      "t_ms": 11016.486,
+      "kind": "start",
+      "detail": "n1"
+    },
+    {
+      "t_ms": 11759.135,
+      "kind": "stop",
+      "detail": "n2"
+    },
+    {
+      "t_ms": 12759.497,
+      "kind": "start",
+      "detail": "n2"
+    },
+    {
+      "t_ms": 13503.916,
+      "kind": "stop",
+      "detail": "n3"
+    },
+    {
+      "t_ms": 14507.664,
+      "kind": "start",
+      "detail": "n3"
+    },
+    {
+      "t_ms": 15277.555,
+      "kind": "stop",
+      "detail": "n4"
+    },
+    {
+      "t_ms": 16278.257,
+      "kind": "start",
+      "detail": "n4"
+    },
+    {
+      "t_ms": 16947.767,
+      "kind": "stop",
+      "detail": "n5"
+    },
+    {
+      "t_ms": 17948.36,
+      "kind": "start",
+      "detail": "n5"
+    },
+    {
+      "t_ms": 18561.174,
+      "kind": "heal"
+    }
+  ],
+  "baseline": {
+    "ops": 30008,
+    "errors": 0,
+    "availability": 1,
+    "p50_ms": 0.712,
+    "p99_ms": 3.512,
+    "p999_ms": 8.693,
+    "max_ms": 26.278,
+    "read_p99_ms": 2.757,
+    "write_p99_ms": 5.212
+  },
+  "fault": {
+    "ops": 25675,
+    "errors": 0,
+    "availability": 1,
+    "p50_ms": 0.705,
+    "p99_ms": 4.139,
+    "p999_ms": 16.898,
+    "max_ms": 23.968,
+    "read_p99_ms": 3.136,
+    "write_p99_ms": 6.292
+  },
+  "after": {
+    "ops": 169317,
+    "errors": 0,
+    "availability": 1,
+    "p50_ms": 0.692,
+    "p99_ms": 3.193,
+    "p999_ms": 14.902,
+    "max_ms": 26.53,
+    "read_p99_ms": 2.179,
+    "write_p99_ms": 5.029
+  },
+  "impact": {
+    "ops": 194992,
+    "errors": 0,
+    "availability": 1,
+    "p50_ms": 0.694,
+    "p99_ms": 3.297,
+    "p999_ms": 15.258,
+    "max_ms": 26.53,
+    "read_p99_ms": 2.304,
+    "write_p99_ms": 5.306
+  },
+  "overall": {
+    "ops": 225000,
+    "errors": 0,
+    "availability": 1,
+    "p50_ms": 0.696,
+    "p99_ms": 3.327,
+    "p999_ms": 14.609,
+    "max_ms": 26.53,
+    "read_p99_ms": 2.364,
+    "write_p99_ms": 5.259
+  },
+  "recovery_ms": 0,
+  "recovery_after_heal_ms": 0,
+  "disrupted_ms": 0,
+  "rejoin_ms": 41.552999999999884,
+  "degraded_p99_bound_ms": 50,
+  "started_at": "2026-11-13T18:44:26Z"
+}

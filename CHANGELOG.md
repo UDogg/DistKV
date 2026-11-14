@@ -2,6 +2,26 @@
 
 ## Unreleased: Game Day, live linearizability checking, incidents, a guided dashboard
 
+### New: Raft fault-injection study
+- **`cmd/distkv-study` and `make study`**: one command runs 14 scenarios x 3 runs on fresh 5-node
+  clusters of real processes (crash at three election timeouts, graceful stop, pause, leader / minority /
+  flapping partitions, slow and lossy links, rolling restart), with open-loop load measured from each
+  operation's scheduled start. It writes 100 ms timelines and per-run summaries; `study/plot.py` draws
+  the figures and `study/report.py` builds the PDF report
+  ([study/raft-fault-injection-study.pdf](study/raft-fault-injection-study.pdf)): a designed 22-page report
+  with a cover, clickable contents and PDF bookmarks, six vector diagrams (architecture, fault injection,
+  run anatomy, crash failover, minority partition, the gray-failure bug), a glossary and 14 references.
+  It builds deterministically.
+- `loadgen.Config.OnOp` reports every measured operation.
+
+### Fixed
+- **Go client: a paused or wedged leader no longer holds requests for their whole deadline.** Its kernel
+  still accepts connections, so with the old client every request to it waited the full 5 s: the study
+  measured 10.8% failed requests and 8.50 s of recovery for a 10 s SIGSTOP, although Raft
+  re-elected within a second. `Config.AttemptTimeout` (default 1 s; negative disables) bounds each
+  attempt; a timed-out attempt forgets the cached leader and the retry skips that node. Same fault now:
+  100% availability, 1.10 s recovery.
+
 ### New: self-healing and a game layer
 - **Self-healing autopilot** (on by default; `S` or the 🤖 button toggles it). Every broken node gets
   its own repair, all running in parallel, so nobody has to press Heal. Each fault has its own playbook:
