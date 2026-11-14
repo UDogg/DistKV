@@ -1,3 +1,5 @@
+//go:build unix
+
 // Command distkv-study runs a reproducible fault-injection study of DistKV's
 // Raft implementation: for each scenario it starts a fresh multi-process
 // cluster, drives an open-loop workload, injects one fault on a fixed
