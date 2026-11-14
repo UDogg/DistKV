@@ -8,7 +8,10 @@
   flapping partitions, slow and lossy links, rolling restart), with open-loop load measured from each
   operation's scheduled start. It writes 100 ms timelines and per-run summaries; `study/plot.py` draws
   the figures and `study/report.py` builds the PDF report
-  ([study/raft-fault-injection-study.pdf](study/raft-fault-injection-study.pdf)).
+  ([study/raft-fault-injection-study.pdf](study/raft-fault-injection-study.pdf)): a designed 22-page report
+  with a cover, clickable contents and PDF bookmarks, six vector diagrams (architecture, fault injection,
+  run anatomy, crash failover, minority partition, the gray-failure bug), a glossary and 14 references.
+  It builds deterministically.
 - `loadgen.Config.OnOp` reports every measured operation.
 
 ### Fixed

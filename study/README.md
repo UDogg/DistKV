@@ -37,6 +37,24 @@ Medians of 3 runs, 5 nodes, 24 shards, 3,000 ops/s ([full report](raft-fault-inj
   its kernel still accepted connections, so requests waited out their deadline. A per-attempt timeout in
   the Go client (`Config.AttemptTimeout`, default 1 s) fixed it: 100% availability, 1.10 s recovery.
 
+## The report
+
+[raft-fault-injection-study.pdf](raft-fault-injection-study.pdf) (22 pages) is generated from the results,
+so every number in it is measured. It has an executive summary, the method, results by fault family
+with timelines, the election-timeout trade-off, findings, interview preparation and CV lines. Six vector
+diagrams explain the mechanisms: the multi-Raft architecture, where faults are injected, the anatomy of a
+run, a crash failover, the minority partition and the gray-failure bug. A glossary and 14 references to
+the primary literature (Raft, leases, CAP, Dynamo, linearizability, gray failure, coordinated omission,
+chaos engineering) close it. The PDF builds deterministically: identical results give an identical file.
+
+| Source | Role |
+|---|---|
+| [`../cmd/distkv-study`](../cmd/distkv-study) | the harness: clusters, workload, faults, measurement |
+| [`plot.py`](plot.py) | figures and `results/summary.{csv,json}` |
+| [`report.py`](report.py) | layout: cover, contents, headers, figure numbering |
+| [`narrative.py`](narrative.py) | the prose, glossary and references |
+| [`diagrams.py`](diagrams.py) | the vector diagrams |
+
 ## One command
 
 ```bash

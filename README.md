@@ -118,6 +118,8 @@ stops, process pauses, leader / minority / flapping partitions, slow and lossy l
 * **11 of 12 faults caused zero failed requests**; a crashed leader cost 759 ms of p99.9 and recovered in 796 ms.
 * Recovery tracks the election timeout: 397 ms → 796 ms → 1.60 s for 250 ms → 500 ms → 1 s.
 * Losing a majority makes exactly the affected shards refuse requests (9 of 24), as a CP system must.
+<p align="center"><a href="study/raft-fault-injection-study.pdf"><img src="docs/assets/study-cover.png" alt="Cover of the study report: Raft Under Fire" width="360"></a></p>
+
 * It found a **gray-failure bug in the client**: a paused leader failed 10.8% of requests for
   8.50 s; a per-attempt timeout fixed it (100%, 1.10 s).
 

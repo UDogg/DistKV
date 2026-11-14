@@ -1,12 +1,14 @@
 """The prose of the study report.
 
 Numbers are read from the results (S: per-scenario summary keyed by
-scenario id); the interpretation is written against them, and claims that
-depend on a result are guarded by checks in `claims()` so that a re-run
-with different outcomes fails loudly instead of printing stale prose."""
+scenario id) and the interpretation is written against them. Wording that
+depends on an outcome (zero failures, no disruption) is conditional on the
+data, so a re-run regenerates consistent text; the interpretation itself was
+written for these results and should be re-read after a re-run."""
 
 
 OLD_CLIENT = "pause-leader-no-attempt-timeout"
+K = {}  # report helpers (diagram, cite, diagrams module), set by build()
 
 
 def build(meta, S, rows, runs, k):
@@ -16,6 +18,9 @@ def build(meta, S, rows, runs, k):
     colors, inch = k["colors"], k["inch"]
     INK, MUTED, ACCENT, RULE, SOFT, CRASH = k["INK"], k["MUTED"], k["ACCENT"], k["RULE"], k["SOFT"], k["CRASH"]
     ss = k["ss"]
+    K.update(k)
+    cite, diagram, D, quote, StatTiles = k["cite"], k["diagram"], k["diagrams"], k["quote"], k["StatTiles"]
+    NAVY, AMBER = k["NAVY"], k["AMBER"]
 
     def g(sid, key, default=None):
         return S.get(sid, {}).get(key, default)
@@ -43,37 +48,26 @@ def build(meta, S, rows, runs, k):
     story = []
     A = story.append
 
-    # ------------------------------------------------------------------ title page
-    A(Spacer(1, 0.3 * inch))
-    A(P("Raft Under Fire", "title"))
-    A(P(f"A fault-injection study of DistKV: availability, tail latency and recovery time of a multi-Raft "
-        f"key-value store across {n} injected fault scenarios", "subtitle"))
-    A(P(f"{k['today']} · {meta['nodes']}-node cluster, {meta['shards']} shards, replication factor "
-        f"{meta['replication']}, fsync on · open-loop load at {meta['rate']:,} ops/s · {nruns} runs, "
-        f"{total_ops:,} measured operations · commit <font name='Mono'>{meta['git_commit']}</font>", "small"))
-    A(Spacer(1, 10))
-
+    # ------------------------------------------------------------------ executive summary
+    c, pa, pn, pm = S["crash-leader"], S["pause-leader"], S[OLD_CLIENT], S["partition-minority"]
+    A(P("Executive summary", "h1"))
+    A(P(f"Twelve kinds of failure were injected into a live five-node DistKV cluster while it served "
+        f"{meta['rate']:,} requests a second, three times each, on a fresh cluster every time. Every request's outcome "
+        f"was recorded, {total_ops:,} in all. The question was not whether Raft works on paper "
+        f"{cite(1, 2)}, but what each failure costs real clients in availability, tail latency and recovery "
+        f"time, and why.", "lead"))
+    A(StatTiles([(ms(c["recovery_ms"]), "recovery from a crashed\nleader, zero failures", CRASH),
+                 (f"{len(masked)}/{n}", "faults with zero\nfailed requests", ACCENT),
+                 (f"{pm['shards_without_quorum']:.0f}/24", "shards refused requests\nwhen a majority was lost", AMBER),
+                 (f"{ms(pn['recovery_ms'])} → {ms(pa['recovery_ms'])}", "paused-leader recovery,\nbefore → after the fix", NAVY)]))
+    A(Spacer(1, 12))
     findings = key_findings(S, g, ms, pct, masked, n)
     A(callout([P("<b>Key findings</b>", "callout"), Spacer(1, 4)] + bullets(findings)))
-    A(Spacer(1, 12))
-    cv = cv_lines(S, g, ms, pct, n, masked, meta)
-    A(callout([P("<b>The CV line</b> (filled in from these results)", "callout"), Spacer(1, 4),
-               P(f"<i>{cv[0]}</i>", "callout")], bg=colors.HexColor("#fdf3e7"), edge=colors.HexColor("#edae49")))
-    A(Spacer(1, 12))
-    A(PageBreak())
-    glance = [["Cluster", f"{meta['nodes']} distkv processes, {meta['shards']} shards x {meta['replication']} replicas (multi-Raft), fsync on every commit"],
-              ["Workload", f"open loop, {meta['rate']:,} ops/s, {int(meta['read_ratio'] * 100)}% linearizable reads, {meta['keys']:,} keys, 5 s deadline with retries"],
-              ["Schedule", f"{meta['warmup_s']:.0f} s warm-up, {meta['pre_s']:.0f} s steady state, 10 s fault, {meta['post_s']:.0f} s observation"],
-              ["Faults", "crash, graceful stop, pause, partition (leader, minority, flapping), slow and lossy links, rolling restart"],
-              ["Repetition", f"{meta['runs']} runs per scenario, each on a fresh cluster; medians reported"],
-              ["Machine", f"one VM, {meta['cpus']} vCPUs shared by all nodes and the load generator"]]
-    A(table(Table, TableStyle, colors, [["Setup", ""]] + glance, [1.1, 5.9], ss, header_bg=SOFT))
     A(Spacer(1, 10))
-    A(P("<b>Reproduce everything</b> (results, figures and this PDF) with one command from the repository root:", "body"))
-    A(P("make study        # 14 scenarios x 3 runs, ~40 min, then plots + PDF", "code"))
-    A(P("Raw data: <font name='Mono'>study/results/</font> (one 100 ms timeline per run, a JSON summary per run, "
-        "<font name='Mono'>summary.csv</font>). Harness: <font name='Mono'>cmd/distkv-study</font>. Figures: "
-        "<font name='Mono'>study/plot.py</font>. This report: <font name='Mono'>study/report.py</font>.", "small"))
+    cv = cv_lines(S, g, ms, pct, n, masked, meta)
+    A(callout([P("<b>The CV line</b>, filled in from these results", "callout"), Spacer(1, 4),
+               P(f"<i>“{cv[0]}”</i>", "callout")], bg=colors.HexColor("#fdf3e7"), edge=AMBER))
+    A(PageBreak())
 
     # ------------------------------------------------------------------ 1. why
     A(P("1. Why this study", "h1"))
@@ -82,30 +76,42 @@ def build(meta, S, rows, runs, k):
         "what was built; it doesn't say how the system behaves when a leader dies mid-write, when the "
         "network splits, or when a node is merely slow. This study answers those questions with measurements "
         "instead of assertions, on the DistKV project itself."))
+    A(P(f"The failures are not hypothetical. A study of 136 network-partitioning failures across 25 widely used "
+        f"distributed systems found that most of them had catastrophic effects, from data loss to broken locks "
+        f"{cite(12)}; years of Jepsen analyses have found consistency bugs in one production database after "
+        f"another {cite(13)}; and partially failed, slow or frozen nodes (gray failures) are behind many cloud "
+        f"incidents precisely because the system's own failure detectors don't see them {cite(8)}. Injecting "
+        f"faults on purpose and measuring what clients experience is the practice Netflix named chaos "
+        f"engineering {cite(9)}."))
     A(P("Three questions drive it:"))
     story.extend(bullets([
         "<b>Availability.</b> Which faults can Raft mask completely, and which ones must cost requests? "
         "(Raft is a CP design: when a shard loses its majority it has to stop answering.)",
-        "<b>Tail latency.</b> What does a failover cost the slowest 1% and 0.1% of requests, measured the way a "
-        "user would experience it?",
+        f"<b>Tail latency.</b> What does a failover cost the slowest 1% and 0.1% of requests, measured the way a "
+        f"user would experience it? At scale, the tail is what users feel {cite(11)}.",
         "<b>Recovery time.</b> How long from the fault until clients see normal service again, and what sets "
         "that time (election timeouts, leases, catch-up)?",
     ]))
 
     # ------------------------------------------------------------------ 2. system
     A(P("2. The system under test", "h1"))
-    A(P("DistKV is a sharded key-value store written in Go. Keys are spread over shards by a consistent-hash "
-        "ring; <b>each shard is its own Raft group</b> (multi-Raft), replicated on three of the five nodes, so a "
-        "node is the leader of some shards and a follower of others. The features below decide how faults "
-        "play out, and each one shows up in the results:"))
+    A(P(f"DistKV is a sharded key-value store written in Go. Keys are spread over shards by a consistent-hash "
+        f"ring; <b>each shard is its own Raft group</b> {cite(1)} (multi-Raft), replicated on three of the five "
+        f"nodes, so a node is the leader of some shards and a follower of others (Figure {K['fig_next']()}). A write commits once "
+        f"a majority of its shard's replicas have it on disk; reads are linearizable {cite(7)}."))
+    story.extend(diagram(D.architecture(), "DistKV's architecture. The client hashes each key to a shard and sends "
+                                           "the request straight to that shard's leader. Each node hosts a mix of "
+                                           "leader and follower replicas, so losing a node removes some leaders "
+                                           "but no shard's majority."))
+    A(P("The features below decide how faults play out, and each one shows up in the results:"))
     story.extend(bullets([
-        "<b>Pre-vote and check-quorum.</b> A node that can't reach a majority neither disrupts the cluster "
-        "with elections nor keeps acting as leader: a cut-off leader steps down by itself.",
-        "<b>Leader leases and ReadIndex.</b> Linearizable reads are served by the leader without a log write "
-        "while its lease is valid; a new leader can't serve until the old lease has expired, which is what "
-        "keeps reads correct after a partition or a process pause.",
-        "<b>Leadership transfer (TimeoutNow).</b> On SIGTERM a node hands each of its leaderships to an "
-        "up-to-date follower before exiting, so a planned restart needs no election timeout.",
+        f"<b>Pre-vote and check-quorum</b> {cite(2, 14)}. A node that can't reach a majority neither disrupts the "
+        f"cluster with elections nor keeps acting as leader: a cut-off leader steps down by itself.",
+        f"<b>Leader leases and ReadIndex</b> {cite(2, 3)}. Linearizable reads are served by the leader without a "
+        f"log write while its lease is valid; a new leader can't serve until the old lease has expired, which is "
+        f"what keeps reads correct after a partition or a process pause.",
+        f"<b>Leadership transfer (TimeoutNow)</b> {cite(2)}. On SIGTERM a node hands each of its leaderships to an "
+        f"up-to-date follower before exiting, so a planned restart needs no election timeout.",
         "<b>Durability.</b> Writes are acknowledged once a majority has fsynced them (group commit on a "
         "write-ahead log); a SIGKILLed node restarts from its log and catches up from the leaders.",
         "<b>Smart client.</b> Requests go straight to each shard's leader, follow redirects, and are retried with "
@@ -118,6 +124,9 @@ def build(meta, S, rows, runs, k):
         "<b>Network faults</b> use a hook in DistKV's Raft transport (enabled only with "
         "<font name='Mono'>--enable-fault-injection</font>) that applies to every Raft message the node sends "
         "or receives; client requests are not affected, which models a partition of the peer network."))
+    story.extend(diagram(D.fault_layer(), "Where each fault enters. Signals act on the whole process; the transport "
+                                          "hook drops or delays Raft messages in both directions; client requests "
+                                          "always get through, so clients keep talking to a partitioned node."))
     cat = [["Fault", "Mechanism", "Real-world analogue"],
            ["Crash", "SIGKILL, restart from the data directory 10 s later", "power loss, kernel panic, OOM kill"],
            ["Graceful stop", "SIGTERM (leadership transfer, then exit), restart 10 s later", "deploy, planned maintenance"],
@@ -134,17 +143,22 @@ def build(meta, S, rows, runs, k):
 
     # ------------------------------------------------------------------ 4. method
     A(P("4. Methodology", "h1"))
+    glance = [["Cluster", f"{meta['nodes']} distkv processes, {meta['shards']} shards x {meta['replication']} replicas (multi-Raft), fsync on every commit"],
+              ["Workload", f"open loop, {meta['rate']:,} ops/s, {int(meta['read_ratio'] * 100)}% linearizable reads, {meta['keys']:,} keys, 5 s deadline with retries"],
+              ["Schedule", f"{meta['warmup_s']:.0f} s warm-up, {meta['pre_s']:.0f} s steady state, 10 s fault, {meta['post_s']:.0f} s observation"],
+              ["Faults", "crash, graceful stop, pause, partition (leader, minority, flapping), slow and lossy links, rolling restart"],
+              ["Repetition", f"{meta['runs']} runs per scenario, each on a fresh cluster; medians reported"],
+              ["Machine", f"one VM, {meta['cpus']} vCPUs shared by all nodes and the load generator"],
+              ["Reproduce", "<font name='Mono'>make study</font> (~40 min): results, figures and this PDF"]]
+    A(table(Table, TableStyle, colors, glance, [1.1, 5.9], ss, zebra=True))
+    A(Spacer(1, 8))
     A(P(f"Each of the {len(rows)} scenarios ({n} faults, the old-client comparison and a no-fault baseline) runs "
         "three times. Every run starts from "
         "nothing: a fresh temporary directory, five new processes, a wait until the cluster has been fully "
         "healthy for 3 s, a preload of 20,000 keys, and another wait for leadership balancing to settle."))
-    sched = [["Phase", "Length", "What happens"],
-             ["Warm-up", f"{meta['warmup_s']:.0f} s", "load runs, not measured (connections, leader discovery)"],
-             ["Steady state", f"{meta['pre_s']:.0f} s", "measured: the baseline window of each run"],
-             ["Fault", "10 s (rolling restart: until done)", "fault injected at the start, healed at the end"],
-             ["Observation", f"{meta['post_s']:.0f} s", "after the heal: restart, catch-up, rebalancing"]]
-    A(table(Table, TableStyle, colors, sched, [1.3, 1.9, 3.8], ss, header_bg=SOFT))
-    A(Spacer(1, 6))
+    story.extend(diagram(D.timeline(meta), "Anatomy of a run and the window each metric uses. Load starts with the "
+                                           "warm-up and never pauses; the fault is injected after 10 s of steady "
+                                           "state and healed 10 s later (the rolling restart heals when it finishes)."))
     A(P(f"<b>Workload.</b> {meta['rate']:,} operations per second, open loop (operations are issued on a "
         f"fixed schedule whether or not earlier ones have finished), {int(meta['read_ratio'] * 100)}% "
         f"linearizable reads and {100 - int(meta['read_ratio'] * 100)}% writes of 128-byte values over "
@@ -153,7 +167,7 @@ def build(meta, S, rows, runs, k):
         f"succeeded within {meta['op_timeout_s']} s, retries included."))
     A(P("<b>Latency is measured from each operation's scheduled start</b>, not from when a worker picked it up. "
         "Measuring from the send time would hide the requests that queued behind a stall (coordinated "
-        "omission) and make every failover look cheap."))
+        f"omission {cite(10)}) and make every failover look cheap."))
     A(P("<b>Metrics.</b>"))
     story.extend(bullets([
         "<b>Availability</b>: successful / attempted operations, in the fault window (injection to heal) and "
@@ -192,7 +206,7 @@ def build(meta, S, rows, runs, k):
     A(P("Fault-window availability is measured from injection to heal. p99 and p99.9 cover everything from "
         "injection to the end of the run. * means recovery was only possible after the heal (the system "
         "cannot mask the fault), and the time includes the 10 s fault window.", "small"))
-    story.extend(figure("overview.png", caption="Figure 1. Failed requests in the fault window (log scale; "
+    story.extend(figure("overview.png", caption="Failed requests in the fault window (log scale; "
                                                 "a bar at the far left means zero), latency after injection "
                                                 "against each run's steady state, and recovery time (median and "
                                                 "range of three runs)."))
@@ -206,13 +220,16 @@ def build(meta, S, rows, runs, k):
     # ------------------------------------------------------------------ 8. lessons
     A(CondPageBreak(3 * inch))
     A(P("8. What the study shows", "h1"))
+    A(quote("Raft did its job every time. The one real outage in this study was a client that kept waiting on a "
+            "frozen leader the cluster had already replaced."))
+    A(Spacer(1, 8))
     story.extend(bullets(lessons(S, g, ms, pct, masked, n)))
 
     # ------------------------------------------------------------------ 9. leaderless
     A(P("9. The optional comparison: leaderless replication", "h1"))
-    A(P("The study's scope allowed for a comparison with a simple leaderless (Dynamo-style) mode: every "
-        "replica accepts writes, a write succeeds on W of N acknowledgements and a read consults R replicas, "
-        "with last-writer-wins or vector clocks to reconcile. <b>That comparison was not run.</b> DistKV has "
+    A(P(f"The study's scope allowed for a comparison with a simple leaderless (Dynamo-style) mode: every "
+        f"replica accepts writes, a write succeeds on W of N acknowledgements and a read consults R replicas, "
+        f"with last-writer-wins or vector clocks to reconcile {cite(6)}. <b>That comparison was not run.</b> DistKV has "
         "no leaderless mode, and emulating one in the client would compare an implementation with a sketch."))
     A(P("What the results above predict for it, and how to test that:"))
     story.extend(bullets([
@@ -264,12 +281,20 @@ def build(meta, S, rows, runs, k):
     A(P("Files per run: <font name='Mono'>results/&lt;scenario&gt;/run&lt;n&gt;/bins.csv</font> (100 ms bins: "
         "ops, errors, p50, p99, max) and <font name='Mono'>run.json</font> (windows, events, victims, recovery). "
         "<font name='Mono'>runs.json</font> holds every run; <font name='Mono'>summary.csv</font> the medians.", "body"))
+    A(CondPageBreak(3 * inch))
+    A(P("Appendix C. Glossary", "h1"))
+    for term, meaning in GLOSSARY:
+        A(P(f"<b><font color='#12192b'>{term}</font></b>: {meaning}", "term"))
+    A(PageBreak())
+    A(P("References", "h1"))
+    for i, ref in enumerate(REFERENCES, start=1):
+        A(P(f"<font color='#00798c'><b>[{i}]</b></font>  {ref}", "ref"))
     return story
 
 
 # --------------------------------------------------------------------------- helpers
 
-def table(Table, TableStyle, colors, data, widths_in, ss, header_bg=None, mono_first=False):
+def table(Table, TableStyle, colors, data, widths_in, ss, header_bg=None, mono_first=False, zebra=False):
     from reportlab.lib.units import inch
     from reportlab.platypus import Paragraph
 
@@ -277,8 +302,10 @@ def table(Table, TableStyle, colors, data, widths_in, ss, header_bg=None, mono_f
     for i, row in enumerate(data):
         cells = []
         for j, c in enumerate(row):
-            if i == 0:
+            if i == 0 and not zebra:
                 cells.append(Paragraph(str(c), ss["cellb"]))
+            elif j == 0 and zebra:
+                cells.append(Paragraph(f"<b>{c}</b>", ss["cellb"]))
             elif j == 0 and mono_first:
                 cells.append(Paragraph(f"<font name='Mono'>{c}</font>", ss["cell"]))
             else:
@@ -291,6 +318,10 @@ def table(Table, TableStyle, colors, data, widths_in, ss, header_bg=None, mono_f
           ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4)]
     if header_bg is not None:
         st.append(("BACKGROUND", (0, 0), (-1, 0), header_bg))
+    start = 0 if zebra else 1
+    st.append(("ROWBACKGROUNDS", (0, start), (-1, -1), [colors.white, colors.HexColor("#f6f7fa")]))
+    if zebra:
+        st = [x for x in st if not (x[0] == "LINEBELOW" and x[1] == (0, 0))]
     t.setStyle(TableStyle(st))
     return t
 
@@ -384,17 +415,22 @@ def sections(S, g, ms, pct, P, bullets, figure, PageBreak, CondPageBreak, rec, a
 
     out = [PageBreak(), P("6. Results by fault family", "h1")]
     out += [P("6.1 Crashes, graceful stops and rolling restarts", "h2")]
-    out += figure("timelines_crash.png", caption="Figure 2. Representative run (median disruption) of each "
+    out += figure("timelines_crash.png", caption="Representative run (median disruption) of each "
                                                   "scenario, aligned on the injection at t = 0. Shaded: the fault "
                                                   "window. Green: successful ops/s; red: failed ops/s; line: p99 of "
                                                   "each 100 ms bin on a log scale.")
-    out += crash_text(S, g, ms, pct, P, rec)
+    ct = crash_text(S, g, ms, pct, P, rec)
+    c = _r(S, "crash-leader")
+    out += ct[:1] + K["diagram"](K["diagrams"].failover(c["recovery_ms"]),
+                                 "A leader crash, step by step. The randomised election timeout dominates; pre-vote and "
+                                 "the vote itself take a round trip, and the client finds the new leader through "
+                                 "retries and redirects. The bar at the bottom is the measured median.") + ct[1:]
     out += [CondPageBreak(4 * inch), P("6.2 Partitions and pauses", "h2")]
-    out += figure("timelines_partition.png", caption="Figure 3. Partitions and the process pause, same layout "
-                                                      "as Figure 2.")
+    out += figure("timelines_partition.png", caption="Partitions and the process pause, same layout "
+                                                      "as Figure " + str(K["fig"]("timelines_crash.png")) + ".")
     out += partition_text(S, g, ms, pct, P, rec)
     out += [CondPageBreak(4 * inch), P("6.3 Slow and lossy links", "h2")]
-    out += figure("timelines_slow.png", caption="Figure 4. Slow and lossy links on the busiest leader.")
+    out += figure("timelines_slow.png", caption="Slow and lossy links on the busiest leader.")
     out += slow_text(S, g, ms, pct, P, rec)
     return out
 
@@ -407,7 +443,7 @@ def crash_text(S, g, ms, pct, P, rec):
             f"<b>Crash (SIGKILL).</b> The victim led a median of {c['victim_shards_led']:.0f} shards. Their "
             f"followers stopped hearing heartbeats, waited out the randomised election timeout and elected new "
             f"leaders; the client found them through redirects. Requests to those shards stalled in the "
-            f"meantime, which is the latency spike in Figure 2 (p99.9 {ms(c['impact_p999_ms'])}, max "
+            f"meantime, which is the latency spike in Figure {K['fig']('timelines_crash.png')} (p99.9 {ms(c['impact_p999_ms'])}, max "
             f"{ms(c['impact_max_ms'])}), but <b>{'none' if c['impact_errors'] == 0 else int(c['impact_errors'])} "
             f"failed</b>: retries absorbed the gap, and session sequence numbers kept every retried write "
             f"exactly-once. Service was back to baseline after {ms(c['recovery_ms'])}. When the node restarted "
@@ -457,13 +493,17 @@ def partition_text(S, g, ms, pct, P, rec):
             f"serving. Those {pm['shards_without_quorum']:.0f} shards carry "
             f"{pm['shards_without_quorum'] / 24:.1%} of the traffic, yet fault-window availability was "
             f"{pct(pm['fault_availability'], 1)}: only about half of their requests failed. The client deadline "
-            f"explains it. Requests to the stranded shards fail after 5 s, so in Figure 3 failures stop 5 s into "
+            f"explains it. Requests to the stranded shards fail after 5 s, so in Figure {K['fig']('timelines_partition.png')} failures stop 5 s into "
             f"the partition; requests issued in its last 5 s were still waiting when it healed and succeeded late "
             f"(hence the p99 of {ms(pm['impact_p99_ms'])}). Availability under quorum loss is therefore partly a "
             f"choice of client timeout. "
             f"Service was normal {ms(pm['recovery_after_heal_ms'])} after the heal, "
             f"and the refusal is the guarantee working: a replica cut off from its majority cannot accept a write "
             f"the majority hasn't seen, so the two sides can never diverge."))
+        out += K["diagram"](K["diagrams"].minority(pm["shards_without_quorum"]),
+                            f"Why exactly {pm['shards_without_quorum']:.0f} shards stopped. A shard needs two of its "
+                            f"three replicas to elect a leader. Shards with two replicas on the cut-off nodes can't, "
+                            f"and refuse requests (CP {K['cite'](4, 5)}); the rest elect a leader on the majority side.")
     if pf:
         out.append(P(
             f"<b>Flapping partition.</b> Isolating and reconnecting the leader every second, five times, is "
@@ -488,6 +528,12 @@ def partition_text(S, g, ms, pct, P, rec):
             f"timed-out attempt. Leader leases are what make the pause safe at all: the "
             f"new leader may not serve reads until the old lease has expired, so when the frozen node wakes up "
             f"it cannot serve a stale read from a lease it no longer holds."))
+        out += K["diagram"](K["diagrams"].gray_failure(
+            [("failed requests", pct(1 - pn["fault_availability"], 1)), ("recovery", ms(pn["recovery_ms"]))],
+            [("failed requests", "0" if pa["impact_errors"] == 0 else str(int(pa["impact_errors"]))), ("recovery", ms(pa["recovery_ms"]))]),
+            f"The gray-failure bug {K['cite'](8)}, before and after. A frozen process looks dead to its peers but "
+            f"alive to clients, whose connections are still accepted by its kernel. Bounding each attempt turns a "
+            f"5 s hang into one 1 s detour.")
     return out
 
 
@@ -521,7 +567,7 @@ def election(S, g, ms, P, figure, CondPageBreak):
     from reportlab.lib.units import inch
 
     out = [CondPageBreak(4 * inch), P("7. The election-timeout trade-off", "h1")]
-    out += figure("election_timeout.png", caption="Figure 5. Crash of the busiest leader at three election "
+    out += figure("election_timeout.png", caption="Crash of the busiest leader at three election "
                                                    "timeouts: recovery time and p99.9 latency (dots: runs; line: "
                                                    "median; dashed: y = timeout).")
     e250, e500, e1000 = _r(S, "crash-leader-et250"), _r(S, "crash-leader"), _r(S, "crash-leader-et1000")
@@ -621,3 +667,48 @@ def interview(S, g, ms, pct, meta):
          "the reverse, clock skew against the lease logic, membership changes under load, and the leaderless "
          "comparison in Section 9, with the linearizability checker counting the anomalies each mode allows."),
     ]
+
+
+GLOSSARY = [
+    ("Availability", "the share of attempted requests that succeeded within their deadline (5 s, retries included)."),
+    ("Check-quorum", "a leader steps down if it hasn't heard from a majority for an election timeout, so a cut-off leader stops acting as one."),
+    ("Coordinated omission", "the measurement error of timing requests from when they were sent rather than when they were due, which hides stalls."),
+    ("Election timeout", "how long a follower waits without hearing from a leader before it campaigns; randomised to avoid split votes."),
+    ("Gray failure", "a partial failure (slow, frozen, half-working) that some observers see and others don't."),
+    ("Lease", "a time-bounded promise that lets a leader serve reads without a round trip, valid only while no other leader can exist."),
+    ("Linearizability", "every operation appears to take effect atomically at one instant between its call and its return."),
+    ("Multi-Raft", "running one Raft group per shard, so leadership and quorum are per shard rather than per cluster."),
+    ("Open loop", "issuing requests on a fixed schedule regardless of responses, as independent users do."),
+    ("p99 / p99.9", "the latency that 99% / 99.9% of requests beat; the slowest 1% / 0.1% are above it."),
+    ("Pre-vote", "a candidate first asks whether it could win before incrementing its term, so a rejoining node can't disrupt a healthy leader."),
+    ("Quorum (majority)", "more than half of a shard's replicas: two of three here. Nothing commits without one."),
+    ("ReadIndex", "a linearizable read that confirms leadership with one heartbeat round instead of writing to the log."),
+    ("TimeoutNow", "the message a leader sends to hand leadership to an up-to-date follower immediately, used on graceful shutdown."),
+]
+
+REFERENCES = [
+    "Diego Ongaro and John Ousterhout. <i>In Search of an Understandable Consensus Algorithm.</i> USENIX Annual "
+    "Technical Conference (ATC), 2014.",
+    "Diego Ongaro. <i>Consensus: Bridging Theory and Practice.</i> PhD thesis, Stanford University, 2014. (Pre-vote, "
+    "leadership transfer, leases and ReadIndex.)",
+    "Cary G. Gray and David R. Cheriton. <i>Leases: An Efficient Fault-Tolerant Mechanism for Distributed File Cache "
+    "Consistency.</i> ACM Symposium on Operating Systems Principles (SOSP), 1989.",
+    "Eric A. Brewer. <i>Towards Robust Distributed Systems.</i> Keynote, ACM Symposium on Principles of Distributed "
+    "Computing (PODC), 2000.",
+    "Seth Gilbert and Nancy Lynch. <i>Brewer's Conjecture and the Feasibility of Consistent, Available, "
+    "Partition-Tolerant Web Services.</i> ACM SIGACT News 33(2), 2002.",
+    "Giuseppe DeCandia et al. <i>Dynamo: Amazon's Highly Available Key-value Store.</i> ACM Symposium on Operating "
+    "Systems Principles (SOSP), 2007.",
+    "Maurice P. Herlihy and Jeannette M. Wing. <i>Linearizability: A Correctness Condition for Concurrent Objects.</i> "
+    "ACM Transactions on Programming Languages and Systems 12(3), 1990.",
+    "Peng Huang et al. <i>Gray Failure: The Achilles' Heel of Cloud-Scale Systems.</i> Workshop on Hot Topics in "
+    "Operating Systems (HotOS), 2017.",
+    "Ali Basiri et al. <i>Chaos Engineering.</i> IEEE Software 33(3), 2016.",
+    "Gil Tene. <i>How NOT to Measure Latency.</i> Conference talk, 2015 (coordinated omission).",
+    "Jeffrey Dean and Luiz André Barroso. <i>The Tail at Scale.</i> Communications of the ACM 56(2), 2013.",
+    "Ahmed Alquraan et al. <i>An Analysis of Network-Partitioning Failures in Cloud Systems.</i> USENIX Symposium on "
+    "Operating Systems Design and Implementation (OSDI), 2018.",
+    "Kyle Kingsbury. <i>Jepsen analyses of distributed databases.</i> jepsen.io.",
+    "The etcd authors. <i>etcd-io/raft</i>, the Raft library used by etcd and others (pre-vote and check-quorum "
+    "options). github.com/etcd-io/raft.",
+]
