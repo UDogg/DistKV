@@ -4,13 +4,14 @@ A reproducible study of how DistKV's Raft implementation behaves under injected 
 **availability, tail latency and recovery time** across 12 fault scenarios (plus an old-client comparison and a no-fault baseline),
 each repeated three times on a fresh 5-node cluster of real `distkv` processes.
 
-📄 **Report:** [raft-fault-injection-study.pdf](raft-fault-injection-study.pdf) ·
+📄 **Report:** [raft-under-fire.pdf](https://udogg.github.io/DistKV/raft-under-fire.pdf) (hosted on GitHub Pages; source file
+[raft-fault-injection-study.pdf](raft-fault-injection-study.pdf)) ·
 📊 **Data:** [results/](results/) (`summary.csv`, `runs.json`, one `bins.csv` timeline per run) ·
 🖼 **Figures:** [results/figures/](results/figures/)
 
 ## Headline results
 
-Medians of 3 runs, 5 nodes, 24 shards, 3,000 ops/s ([full report](raft-fault-injection-study.pdf)):
+Medians of 3 runs, 5 nodes, 24 shards, 3,000 ops/s ([full report](https://udogg.github.io/DistKV/raft-under-fire.pdf)):
 
 | Scenario | Failed requests | Availability (fault window) | p99.9 after injection | Recovery |
 |---|---:|---:|---:|---:|
@@ -39,13 +40,14 @@ Medians of 3 runs, 5 nodes, 24 shards, 3,000 ops/s ([full report](raft-fault-inj
 
 ## The report
 
-[raft-fault-injection-study.pdf](raft-fault-injection-study.pdf) (22 pages) is generated from the results,
+[raft-under-fire.pdf](https://udogg.github.io/DistKV/raft-under-fire.pdf) (22 pages) is generated from the results,
 so every number in it is measured. It has an executive summary, the method, results by fault family
 with timelines, the election-timeout trade-off, findings, interview preparation and CV lines. Six vector
 diagrams explain the mechanisms: the multi-Raft architecture, where faults are injected, the anatomy of a
 run, a crash failover, the minority partition and the gray-failure bug. A glossary and 14 references to
 the primary literature (Raft, leases, CAP, Dynamo, linearizability, gray failure, coordinated omission,
-chaos engineering) close it. The PDF builds deterministically: identical results give an identical file.
+chaos engineering) close it. The PDF builds deterministically: identical results give an identical file. The Pages workflow publishes `study/raft-fault-injection-study.pdf` at
+[https://udogg.github.io/DistKV/raft-under-fire.pdf](https://udogg.github.io/DistKV/raft-under-fire.pdf) whenever it changes on `main`.
 
 | Source | Role |
 |---|---|
