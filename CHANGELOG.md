@@ -3,6 +3,8 @@
 ## Unreleased: Game Day, live linearizability checking, incidents, a guided dashboard
 
 ### New: Raft fault-injection study
+- **The report is hosted** at [udogg.github.io/DistKV/raft-under-fire.pdf](https://udogg.github.io/DistKV/raft-under-fire.pdf) (GitHub Pages republishes it whenever
+  it changes on `main`), linked from the README and the dashboard footer.
 - **`cmd/distkv-study` and `make study`**: one command runs 14 scenarios x 3 runs on fresh 5-node
   clusters of real processes (crash at three election timeouts, graceful stop, pause, leader / minority /
   flapping partitions, slow and lossy links, rolling restart), with open-loop load measured from each
