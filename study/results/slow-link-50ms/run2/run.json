@@ -1,0 +1,87 @@
+{
+  "scenario": "slow-link-50ms",
+  "run": 2,
+  "victims": [
+    "n5"
+  ],
+  "victim_shards_led": [
+    7
+  ],
+  "shards": 24,
+  "shards_without_quorum": 0,
+  "inject_ms": 10002.702,
+  "heal_ms": 20001.233,
+  "end_ms": 40000,
+  "events": [
+    {
+      "t_ms": 10002.702,
+      "kind": "inject",
+      "detail": "n5"
+    },
+    {
+      "t_ms": 20001.234,
+      "kind": "heal"
+    }
+  ],
+  "baseline": {
+    "ops": 30007,
+    "errors": 0,
+    "availability": 1,
+    "p50_ms": 0.707,
+    "p99_ms": 3.947,
+    "p999_ms": 15.695,
+    "max_ms": 28.707,
+    "read_p99_ms": 2.747,
+    "write_p99_ms": 6.638
+  },
+  "fault": {
+    "ops": 29996,
+    "errors": 0,
+    "availability": 1,
+    "p50_ms": 0.703,
+    "p99_ms": 88.722,
+    "p999_ms": 101.845,
+    "max_ms": 179.381,
+    "read_p99_ms": 2.461,
+    "write_p99_ms": 100.017
+  },
+  "after": {
+    "ops": 59996,
+    "errors": 0,
+    "availability": 1,
+    "p50_ms": 0.698,
+    "p99_ms": 3.515,
+    "p999_ms": 13.301,
+    "max_ms": 38.332,
+    "read_p99_ms": 2.527,
+    "write_p99_ms": 5.751
+  },
+  "impact": {
+    "ops": 89992,
+    "errors": 0,
+    "availability": 1,
+    "p50_ms": 0.7,
+    "p99_ms": 68.412,
+    "p999_ms": 98.441,
+    "max_ms": 179.381,
+    "read_p99_ms": 2.502,
+    "write_p99_ms": 94.14
+  },
+  "overall": {
+    "ops": 119999,
+    "errors": 0,
+    "availability": 1,
+    "p50_ms": 0.702,
+    "p99_ms": 59.008,
+    "p999_ms": 97.011,
+    "max_ms": 179.381,
+    "read_p99_ms": 2.561,
+    "write_p99_ms": 91.699
+  },
+  "recovery_ms": -1,
+  "recovery_after_heal_ms": 0,
+  "disrupted_ms": 9900,
+  "rejoin_ms": 1.6270000000004075,
+  "degraded_p99_bound_ms": 50,
+  "started_at": "2026-11-13T18:37:26Z"
+}

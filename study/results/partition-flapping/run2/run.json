@@ -1,0 +1,137 @@
+{
+  "scenario": "partition-flapping",
+  "run": 2,
+  "victims": [
+    "n5"
+  ],
+  "victim_shards_led": [
+    8
+  ],
+  "shards": 24,
+  "shards_without_quorum": 0,
+  "inject_ms": 10003.499,
+  "heal_ms": 20003.531,
+  "end_ms": 40000,
+  "events": [
+    {
+      "t_ms": 10003.5,
+      "kind": "inject",
+      "detail": "n5"
+    },
+    {
+      "t_ms": 10003.989,
+      "kind": "isolate",
+      "detail": "flap 1"
+    },
+    {
+      "t_ms": 11005.106,
+      "kind": "reconnect",
+      "detail": "flap 1"
+    },
+    {
+      "t_ms": 12006.194,
+      "kind": "isolate",
+      "detail": "flap 2"
+    },
+    {
+      "t_ms": 13007.515,
+      "kind": "reconnect",
+      "detail": "flap 2"
+    },
+    {
+      "t_ms": 14008.609,
+      "kind": "isolate",
+      "detail": "flap 3"
+    },
+    {
+      "t_ms": 15010.203,
+      "kind": "reconnect",
+      "detail": "flap 3"
+    },
+    {
+      "t_ms": 16011.495,
+      "kind": "isolate",
+      "detail": "flap 4"
+    },
+    {
+      "t_ms": 17012.444,
+      "kind": "reconnect",
+      "detail": "flap 4"
+    },
+    {
+      "t_ms": 18013.212,
+      "kind": "isolate",
+      "detail": "flap 5"
+    },
+    {
+      "t_ms": 19014.6,
+      "kind": "reconnect",
+      "detail": "flap 5"
+    },
+    {
+      "t_ms": 20003.531,
+      "kind": "heal"
+    }
+  ],
+  "baseline": {
+    "ops": 30010,
+    "errors": 0,
+    "availability": 1,
+    "p50_ms": 0.712,
+    "p99_ms": 3.893,
+    "p999_ms": 13.699,
+    "max_ms": 26.379,
+    "read_p99_ms": 2.683,
+    "write_p99_ms": 8.073
+  },
+  "fault": {
+    "ops": 30000,
+    "errors": 0,
+    "availability": 1,
+    "p50_ms": 0.71,
+    "p99_ms": 247.096,
+    "p999_ms": 788.279,
+    "max_ms": 1117.368,
+    "read_p99_ms": 133.369,
+    "write_p99_ms": 592.957
+  },
+  "after": {
+    "ops": 59989,
+    "errors": 0,
+    "availability": 1,
+    "p50_ms": 0.693,
+    "p99_ms": 3.129,
+    "p999_ms": 9.262,
+    "max_ms": 21.942,
+    "read_p99_ms": 2.247,
+    "write_p99_ms": 4.655
+  },
+  "impact": {
+    "ops": 89989,
+    "errors": 0,
+    "availability": 1,
+    "p50_ms": 0.7,
+    "p99_ms": 4.771,
+    "p999_ms": 509.083,
+    "max_ms": 1117.368,
+    "read_p99_ms": 3.548,
+    "write_p99_ms": 21.276
+  },
+  "overall": {
+    "ops": 119999,
+    "errors": 0,
+    "availability": 1,
+    "p50_ms": 0.702,
+    "p99_ms": 4.424,
+    "p999_ms": 450.501,
+    "max_ms": 1117.368,
+    "read_p99_ms": 3.222,
+    "write_p99_ms": 13.042
+  },
+  "recovery_ms": 996.5010000000002,
+  "recovery_after_heal_ms": 0,
+  "disrupted_ms": 1600,
+  "rejoin_ms": 99.3650000000016,
+  "degraded_p99_bound_ms": 50,
+  "started_at": "2026-11-13T18:49:48Z"
+}

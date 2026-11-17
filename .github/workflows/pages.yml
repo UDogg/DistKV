@@ -6,7 +6,8 @@ name: Pages
 on:
   push:
     branches: [main]
-    paths: ["web/**", "clients/typescript/src/**", "docs/run.html", ".github/workflows/pages.yml"]
+    paths: ["web/**", "clients/typescript/src/**", "docs/run.html", "study/raft-fault-injection-study.pdf",
+            ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -36,6 +37,8 @@ jobs:
       - run: npm run pages --prefix web/dashboard
       - name: Add the run guide (https://<owner>.github.io/DistKV/run.html)
         run: cp docs/run.html dist-pages/run.html
+      - name: Add the fault-injection study (https://<owner>.github.io/DistKV/raft-under-fire.pdf)
+        run: cp study/raft-fault-injection-study.pdf dist-pages/raft-under-fire.pdf
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist-pages

@@ -28,10 +28,16 @@ jobs:
         run: go test ./internal/cluster -run TestRoutingVectors
 
   python:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        python: ["3.9", "3.11", "3.13"]
+        python: ["3.11", "3.13"]
+        os: [ubuntu-latest]
+        include:
+          # The SDK still supports Python 3.9 (requires-python >=3.9), but
+          # setup-python has no 3.9 build for ubuntu-latest (26.04): test it
+          # on the newest runner image that has one.
+          - { python: "3.9", os: ubuntu-24.04 }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

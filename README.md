@@ -108,6 +108,25 @@ commit**. That's a deliberately unfavourable setup. Methodology and raw output a
 <sub>¹ Requests to shards whose leader was killed wait out an election (~0.5–1 s at the default 500 ms timeout) and are
 retried, never lost. Write-only p99 at 10k ops/s is 13.6 ms on this shared box. See the benchmark doc.</sub>
 
+## 🔬 Raft fault-injection study
+
+A reproducible study of DistKV under **12 injected faults** (crashes at three election timeouts, graceful
+stops, process pauses, leader / minority / flapping partitions, slow and lossy links, a rolling restart),
+3 runs each on a fresh 5-node cluster: **[read the report (PDF)](https://udogg.github.io/DistKV/raft-under-fire.pdf)** ·
+[data and method](study/).
+
+* **11 of 12 faults caused zero failed requests**; a crashed leader cost 759 ms of p99.9 and recovered in 796 ms.
+* Recovery tracks the election timeout: 397 ms → 796 ms → 1.60 s for 250 ms → 500 ms → 1 s.
+* Losing a majority makes exactly the affected shards refuse requests (9 of 24), as a CP system must.
+<p align="center"><a href="https://udogg.github.io/DistKV/raft-under-fire.pdf"><img src="docs/assets/study-cover.png" alt="Cover of the study report: Raft Under Fire" width="360"></a></p>
+
+* It found a **gray-failure bug in the client**: a paused leader failed 10.8% of requests for
+  8.50 s; a per-attempt timeout fixed it (100%, 1.10 s).
+
+```bash
+make study    # 14 scenarios x 3 runs (~40 min), then the figures and the PDF
+```
+
 ## 🎬 Failover, live
 
 <table>
@@ -187,6 +206,50 @@ browser hashes it with the same FNV-1a + SplitMix64 code as the servers.</sub></
 parser and HTTP client).</sub></td>
 </tr>
 </table>
+
+## 🧭 Made for everyone, not just engineers
+
+The dashboard explains itself, so anyone can follow the demo:
+
+<table>
+<tr>
+<td width="55%"><img src="docs/assets/welcome.png" alt="Welcome dialog: a live database that heals itself"></td>
+<td valign="top">
+
+- **A welcome on the first visit**, in four short pages: why systems like this exist, the four ideas behind them (shards, copies, leaders and majority voting), what every "break it" button does in everyday terms, and what to watch. Reopen it with **❓ What is this?** or <kbd>I</kbd>.
+- **A 60-second guided tour** that spotlights each panel in turn (<kbd>T</kbd>).
+- **Plain-English explanations on hover** for every tile, button, badge and panel. Touch screens tap the **?** next to a heading.
+- **A live narrator.** After each fault it says what just happened and what to watch. When the cluster heals, it says how quickly and how many requests were affected.
+
+<img src="docs/assets/coach.png" alt="Narrator: healed itself in 1.6 s" width="420">
+
+</td>
+</tr>
+</table>
+
+## 🤖 Self-healing, with a repair bar for every server
+
+Raft keeps the data available while a server is down; the **self-healing autopilot** brings the server
+itself back. It watches every node, and each broken one gets its own repair, **all running in parallel**,
+shown step by step with a live progress bar and a cluster-health bar that climbs back to 100%:
+
+<p align="center"><img src="docs/assets/self-healing.png" alt="Two repairs in parallel: a power loss mid cold boot, and a network cut catching up" width="900"></p>
+
+| Fault | Repair | Why it differs |
+|---|---|---|
+| ⏹ Graceful stop | noticed → restart → catch up | Clean shutdown, so a **warm start** from its snapshot |
+| 💥 `kill -9` | power lost → power restored → **cold boot** → catch up | A power loss: **memory is wiped**, so the log on disk is replayed to rebuild it, which takes longer |
+| ✂️ Partition | link down → re-route → catch up | Alive but cut off; it downloads every change it missed |
+| 📉 Packet loss | diagnose → swap the link → verify | Raft re-sends lost messages; the autopilot removes the cause |
+
+Every stage ends on what is **observed** (the process runs, the node answers, its replication lag is
+gone), never on a timer alone, so a bar never claims a recovery that hasn't happened. The autopilot
+stands back during Game Day and rolling restarts (they control healing themselves) and can be
+switched off (<kbd>S</kbd>) to repair by hand.
+
+**It's a game, too:** breaking things earns XP, each recovery is rated ★★★ (fast and lossless), and
+13 achievements (*Kingslayer*, *Phoenix*, *Flawless*, *Majority lost*…) take you from *Curious
+visitor* to *Principal chaos wizard*. Open the trophy cabinet with 🏆 or <kbd>X</kbd>.
 
 ## 🎯 Game Day: chaos experiments with a correctness proof
 

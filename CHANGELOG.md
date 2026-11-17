@@ -1,6 +1,60 @@
 # Changelog
 
-## Unreleased: Game Day, live linearizability checking, incidents
+## Unreleased: Game Day, live linearizability checking, incidents, a guided dashboard
+
+### New: Raft fault-injection study
+- **The report is hosted** at [udogg.github.io/DistKV/raft-under-fire.pdf](https://udogg.github.io/DistKV/raft-under-fire.pdf) (GitHub Pages republishes it whenever
+  it changes on `main`), linked from the README and the dashboard footer.
+- **`cmd/distkv-study` and `make study`**: one command runs 14 scenarios x 3 runs on fresh 5-node
+  clusters of real processes (crash at three election timeouts, graceful stop, pause, leader / minority /
+  flapping partitions, slow and lossy links, rolling restart), with open-loop load measured from each
+  operation's scheduled start. It writes 100 ms timelines and per-run summaries; `study/plot.py` draws
+  the figures and `study/report.py` builds the PDF report
+  ([study/raft-fault-injection-study.pdf](study/raft-fault-injection-study.pdf)): a designed 22-page report
+  with a cover, clickable contents and PDF bookmarks, six vector diagrams (architecture, fault injection,
+  run anatomy, crash failover, minority partition, the gray-failure bug), a glossary and 14 references.
+  It builds deterministically.
+- `loadgen.Config.OnOp` reports every measured operation.
+
+### Fixed
+- **Go client: a paused or wedged leader no longer holds requests for their whole deadline.** Its kernel
+  still accepts connections, so with the old client every request to it waited the full 5 s: the study
+  measured 10.8% failed requests and 8.50 s of recovery for a 10 s SIGSTOP, although Raft
+  re-elected within a second. `Config.AttemptTimeout` (default 1 s; negative disables) bounds each
+  attempt; a timed-out attempt forgets the cached leader and the retry skips that node. Same fault now:
+  100% availability, 1.10 s recovery.
+
+### New: self-healing and a game layer
+- **Self-healing autopilot** (on by default; `S` or the 🤖 button toggles it). Every broken node gets
+  its own repair, all running in parallel, so nobody has to press Heal. Each fault has its own playbook:
+  a graceful stop restarts warm; a `kill -9` is a power loss (power restored → cold boot, rebuilding the
+  wiped memory from the log on disk → catch-up), so it takes longer; a partition is re-routed, then
+  catches up; packet loss gets its link swapped. Stages finish on observed state (process running,
+  node answering, replication lag gone), not on timers alone. The autopilot stands back during Game Day
+  and rolling restarts. Chaos Monkey relies on it when it's on. Its actions appear in the timeline,
+  logs and incident reports.
+- **Repair HUD**: a cluster-health bar, one card per repair with its steps, progress, elapsed time and
+  the live catch-up count ("4,209 changes to go"), a repair bar on each node card, and a result banner
+  with a ★ rating. Booting nodes are shown as booting, not down.
+- **Game layer**: XP and six levels, a ★–★★★ rating for every recovery, 13 achievements with unlock
+  celebrations, and a trophy cabinet with your stats (`X`). Kept in this browser only.
+- The simulation now models boot time (warm 0.7 s, cold 2.4 s) and gradual catch-up, so recovery is
+  something to watch rather than instant.
+
+### New: a dashboard anyone can follow
+- **Welcome dialog** on the first visit: what DistKV is and why it matters, how it works in four ideas
+  (shards, replicas, leaders, majority vote), every chaos button explained in everyday terms (`kill -9`
+  is "pull the power plug"), and what to watch. It ends with "Show me around", "Break something!" or
+  "I'll explore". It is remembered per browser; reopen it with **❓ What is this?** or `I`; force it with
+  `?intro`, skip it with `?nointro`.
+- **Guided tour** (`T`): a spotlight walk through the panels. Panels that don't exist in the current
+  mode are skipped.
+- **Plain-language tooltips** on every KPI tile, header badge, chaos button, per-node action and panel
+  heading. They show on hover and on keyboard focus; on touch screens, tap the `?` button.
+- **Live narrator**: after each fault, heal or recovery, a "What just happened" card explains it with
+  the real numbers (shards affected, failover time, failed requests, answers verified), with a link to
+  the incident report. It stays quiet during Game Day and Chaos Monkey, which narrate their own start
+  and end. It can be switched off ("Stop explaining" or the welcome's checkbox).
 
 ### New
 - **Live linearizability checking** (`distkv-demo --probe`, on by default). A probe client records
