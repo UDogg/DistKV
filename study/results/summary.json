@@ -1,0 +1,632 @@
+[
+  {
+    "id": "baseline",
+    "title": "No fault",
+    "category": "baseline",
+    "runs": 3,
+    "victim_shards_led": 0,
+    "shards_without_quorum": 0,
+    "baseline_p99_ms": 3.265,
+    "fault_availability": 1,
+    "fault_availability_range": [
+      1,
+      1
+    ],
+    "impact_availability": 1,
+    "overall_availability": 1,
+    "fault_errors": 0,
+    "impact_errors": 0,
+    "fault_p50_ms": 0.699,
+    "fault_p99_ms": 3.65,
+    "fault_p99_range": [
+      3.146,
+      3.96
+    ],
+    "fault_p999_ms": 10.66,
+    "impact_p99_ms": 3.509,
+    "impact_p999_ms": 12.822,
+    "impact_max_ms": 25.164,
+    "fault_write_p99_ms": 5.795,
+    "fault_read_p99_ms": 2.586,
+    "recovery_ms": 0,
+    "recovery_range": [
+      0,
+      0
+    ],
+    "recovery_masked": true,
+    "recovery_after_heal_ms": 0,
+    "disrupted_ms": 0,
+    "disrupted_range": [
+      0,
+      0
+    ],
+    "rejoin_ms": 1.8869999999988067,
+    "fault_window_ms": 9997.14,
+    "errors": []
+  },
+  {
+    "id": "crash-leader",
+    "title": "Crash the busiest leader (SIGKILL)",
+    "category": "crash",
+    "runs": 3,
+    "victim_shards_led": 5,
+    "shards_without_quorum": 0,
+    "baseline_p99_ms": 3.272,
+    "fault_availability": 1,
+    "fault_availability_range": [
+      1,
+      1
+    ],
+    "impact_availability": 1,
+    "overall_availability": 1,
+    "fault_errors": 0,
+    "impact_errors": 0,
+    "fault_p50_ms": 0.694,
+    "fault_p99_ms": 353.737,
+    "fault_p99_range": [
+      285.873,
+      511.432
+    ],
+    "fault_p999_ms": 914.744,
+    "impact_p99_ms": 4.538,
+    "impact_p999_ms": 758.529,
+    "impact_max_ms": 1168.64,
+    "fault_write_p99_ms": 305.547,
+    "fault_read_p99_ms": 360.785,
+    "recovery_ms": 796.3400000000001,
+    "recovery_range": [
+      792.8310000000001,
+      897.4969999999994
+    ],
+    "recovery_masked": true,
+    "recovery_after_heal_ms": 0,
+    "disrupted_ms": 700,
+    "disrupted_range": [
+      700,
+      800
+    ],
+    "rejoin_ms": 101.51800000000003,
+    "fault_window_ms": 9997.938999999998,
+    "errors": []
+  },
+  {
+    "id": "crash-leader-et250",
+    "title": "Crash, election timeout 250 ms",
+    "category": "crash",
+    "runs": 3,
+    "victim_shards_led": 5,
+    "shards_without_quorum": 0,
+    "baseline_p99_ms": 3.582,
+    "fault_availability": 1,
+    "fault_availability_range": [
+      1,
+      1
+    ],
+    "impact_availability": 1,
+    "overall_availability": 1,
+    "fault_errors": 0,
+    "impact_errors": 0,
+    "fault_p50_ms": 0.702,
+    "fault_p99_ms": 5.753,
+    "fault_p99_range": [
+      5.733,
+      28.192
+    ],
+    "fault_p999_ms": 424.782,
+    "impact_p99_ms": 4.051,
+    "impact_p999_ms": 302.463,
+    "impact_max_ms": 770.712,
+    "fault_write_p99_ms": 9.195,
+    "fault_read_p99_ms": 4.673,
+    "recovery_ms": 397.4950000000008,
+    "recovery_range": [
+      397.3019999999997,
+      498.4330000000009
+    ],
+    "recovery_masked": true,
+    "recovery_after_heal_ms": 0,
+    "disrupted_ms": 300,
+    "disrupted_range": [
+      300,
+      400
+    ],
+    "rejoin_ms": 101.21399999999994,
+    "fault_window_ms": 9998.596,
+    "errors": []
+  },
+  {
+    "id": "crash-leader-et1000",
+    "title": "Crash, election timeout 1 s",
+    "category": "crash",
+    "runs": 3,
+    "victim_shards_led": 6,
+    "shards_without_quorum": 0,
+    "baseline_p99_ms": 3.329,
+    "fault_availability": 1,
+    "fault_availability_range": [
+      1,
+      1
+    ],
+    "impact_availability": 1,
+    "overall_availability": 1,
+    "fault_errors": 0,
+    "impact_errors": 0,
+    "fault_p50_ms": 0.718,
+    "fault_p99_ms": 1096.559,
+    "fault_p99_range": [
+      1024.698,
+      1236.076
+    ],
+    "fault_p999_ms": 1652.133,
+    "impact_p99_ms": 44.898,
+    "impact_p999_ms": 1482.375,
+    "impact_max_ms": 1929.931,
+    "fault_write_p99_ms": 968.838,
+    "fault_read_p99_ms": 1132.721,
+    "recovery_ms": 1595.9709999999995,
+    "recovery_range": [
+      1497.1000000000004,
+      1696.8610000000008
+    ],
+    "recovery_masked": true,
+    "recovery_after_heal_ms": 0,
+    "disrupted_ms": 1500,
+    "disrupted_range": [
+      1400,
+      1600
+    ],
+    "rejoin_ms": 201.3780000000006,
+    "fault_window_ms": 9997.651000000002,
+    "errors": []
+  },
+  {
+    "id": "stop-leader",
+    "title": "Graceful stop of the busiest leader (SIGTERM)",
+    "category": "crash",
+    "runs": 3,
+    "victim_shards_led": 9,
+    "shards_without_quorum": 0,
+    "baseline_p99_ms": 3.409,
+    "fault_availability": 1,
+    "fault_availability_range": [
+      1,
+      1
+    ],
+    "impact_availability": 1,
+    "overall_availability": 1,
+    "fault_errors": 0,
+    "impact_errors": 0,
+    "fault_p50_ms": 0.694,
+    "fault_p99_ms": 3.322,
+    "fault_p99_range": [
+      3.318,
+      3.463
+    ],
+    "fault_p999_ms": 15.782,
+    "impact_p99_ms": 3.332,
+    "impact_p999_ms": 14.463,
+    "impact_max_ms": 34.188,
+    "fault_write_p99_ms": 4.97,
+    "fault_read_p99_ms": 2.437,
+    "recovery_ms": 0,
+    "recovery_range": [
+      0,
+      0
+    ],
+    "recovery_masked": true,
+    "recovery_after_heal_ms": 0,
+    "disrupted_ms": 0,
+    "disrupted_range": [
+      0,
+      0
+    ],
+    "rejoin_ms": 102.43699999999808,
+    "fault_window_ms": 9996.777,
+    "errors": []
+  },
+  {
+    "id": "pause-leader",
+    "title": "Pause the busiest leader (SIGSTOP)",
+    "category": "slow",
+    "runs": 3,
+    "victim_shards_led": 5,
+    "shards_without_quorum": 0,
+    "baseline_p99_ms": 3.335,
+    "fault_availability": 1,
+    "fault_availability_range": [
+      1,
+      1
+    ],
+    "impact_availability": 1,
+    "overall_availability": 1,
+    "fault_errors": 0,
+    "impact_errors": 0,
+    "fault_p50_ms": 0.714,
+    "fault_p99_ms": 1006.687,
+    "fault_p99_range": [
+      1006.529,
+      1007.154
+    ],
+    "fault_p999_ms": 1009.576,
+    "impact_p99_ms": 5.563,
+    "impact_p999_ms": 1008.538,
+    "impact_max_ms": 1019.367,
+    "fault_write_p99_ms": 1007.201,
+    "fault_read_p99_ms": 1006.516,
+    "recovery_ms": 1096.8410000000003,
+    "recovery_range": [
+      1093.2810000000009,
+      1096.924000000001
+    ],
+    "recovery_masked": true,
+    "recovery_after_heal_ms": 0,
+    "disrupted_ms": 1000,
+    "disrupted_range": [
+      1000,
+      1000
+    ],
+    "rejoin_ms": 50.97099999999773,
+    "fault_window_ms": 9997.057000000003,
+    "errors": []
+  },
+  {
+    "id": "pause-leader-no-attempt-timeout",
+    "title": "Pause, client without a per-attempt timeout",
+    "category": "slow",
+    "runs": 3,
+    "victim_shards_led": 5,
+    "shards_without_quorum": 0,
+    "baseline_p99_ms": 3.422,
+    "fault_availability": 0.891960385474674,
+    "fault_availability_range": [
+      0.873219705813682,
+      0.8941050946919178
+    ],
+    "impact_availability": 0.9639951993599146,
+    "overall_availability": 0.9729831081925683,
+    "fault_errors": 3240,
+    "impact_errors": 3240,
+    "fault_p50_ms": 0.806,
+    "fault_p99_ms": 4591.358,
+    "fault_p99_range": [
+      4586.574,
+      4657.045
+    ],
+    "fault_p999_ms": 4955.157,
+    "impact_p99_ms": 2009.735,
+    "impact_p999_ms": 4847.333,
+    "impact_max_ms": 5001.11,
+    "fault_write_p99_ms": 4516.634,
+    "fault_read_p99_ms": 4624.822,
+    "recovery_ms": 8496.137,
+    "recovery_range": [
+      7693.325000000001,
+      8596.732
+    ],
+    "recovery_masked": true,
+    "recovery_after_heal_ms": 0,
+    "disrupted_ms": 8400,
+    "disrupted_range": [
+      7600,
+      8600
+    ],
+    "rejoin_ms": 168.31300000000192,
+    "fault_window_ms": 9996.491,
+    "errors": []
+  },
+  {
+    "id": "partition-leader",
+    "title": "Partition the busiest leader",
+    "category": "partition",
+    "runs": 3,
+    "victim_shards_led": 6,
+    "shards_without_quorum": 0,
+    "baseline_p99_ms": 3.197,
+    "fault_availability": 1,
+    "fault_availability_range": [
+      1,
+      1
+    ],
+    "impact_availability": 1,
+    "overall_availability": 1,
+    "fault_errors": 0,
+    "impact_errors": 0,
+    "fault_p50_ms": 0.701,
+    "fault_p99_ms": 6.562,
+    "fault_p99_range": [
+      5.117,
+      89.073
+    ],
+    "fault_p999_ms": 502.398,
+    "impact_p99_ms": 3.975,
+    "impact_p999_ms": 264.379,
+    "impact_max_ms": 942.615,
+    "fault_write_p99_ms": 302.141,
+    "fault_read_p99_ms": 3.363,
+    "recovery_ms": 897.5689999999995,
+    "recovery_range": [
+      796.9609999999993,
+      898.0280000000002
+    ],
+    "recovery_masked": true,
+    "recovery_after_heal_ms": 0,
+    "disrupted_ms": 800,
+    "disrupted_range": [
+      700,
+      900
+    ],
+    "rejoin_ms": 100.95799999999872,
+    "fault_window_ms": 9999.129,
+    "errors": []
+  },
+  {
+    "id": "partition-minority",
+    "title": "Partition two nodes (a minority)",
+    "category": "partition",
+    "runs": 3,
+    "victim_shards_led": 11,
+    "shards_without_quorum": 9,
+    "baseline_p99_ms": 3.144,
+    "fault_availability": 0.8152329570053618,
+    "fault_availability_range": [
+      0.8147962925918517,
+      0.8308840681128995
+    ],
+    "impact_availability": 0.938349390494605,
+    "overall_availability": 0.9537658960982683,
+    "fault_errors": 5548,
+    "impact_errors": 5548,
+    "fault_p50_ms": 1.601,
+    "fault_p99_ms": 4780.836,
+    "fault_p99_range": [
+      4775.43,
+      4789.024
+    ],
+    "fault_p999_ms": 4989.329,
+    "impact_p99_ms": 4219.678,
+    "impact_p999_ms": 4931.552,
+    "impact_max_ms": 5088.721,
+    "fault_write_p99_ms": 4771.065,
+    "fault_read_p99_ms": 4784.248,
+    "recovery_ms": 10497.063,
+    "recovery_range": [
+      10397.312,
+      10596.659
+    ],
+    "recovery_masked": false,
+    "recovery_after_heal_ms": 493.9579999999987,
+    "disrupted_ms": 10400,
+    "disrupted_range": [
+      10300,
+      10500
+    ],
+    "rejoin_ms": 511.72699999999895,
+    "fault_window_ms": 10003.105000000001,
+    "errors": []
+  },
+  {
+    "id": "partition-flapping",
+    "title": "Flapping partition (1 s on, 1 s off, x5)",
+    "category": "partition",
+    "runs": 3,
+    "victim_shards_led": 5,
+    "shards_without_quorum": 0,
+    "baseline_p99_ms": 3.494,
+    "fault_availability": 1,
+    "fault_availability_range": [
+      1,
+      1
+    ],
+    "impact_availability": 1,
+    "overall_availability": 1,
+    "fault_errors": 0,
+    "impact_errors": 0,
+    "fault_p50_ms": 0.708,
+    "fault_p99_ms": 168.185,
+    "fault_p99_range": [
+      106.373,
+      247.096
+    ],
+    "fault_p999_ms": 708.193,
+    "impact_p99_ms": 4.407,
+    "impact_p999_ms": 493.267,
+    "impact_max_ms": 1073.297,
+    "fault_write_p99_ms": 519.059,
+    "fault_read_p99_ms": 77.097,
+    "recovery_ms": 895.9439999999995,
+    "recovery_range": [
+      887.8449999999993,
+      996.5010000000002
+    ],
+    "recovery_masked": true,
+    "recovery_after_heal_ms": 0,
+    "disrupted_ms": 1500,
+    "disrupted_range": [
+      1500,
+      1600
+    ],
+    "rejoin_ms": 97.5759999999973,
+    "fault_window_ms": 10000.148000000001,
+    "errors": []
+  },
+  {
+    "id": "slow-link-50ms",
+    "title": "Slow links: +50 ms on the busiest leader",
+    "category": "slow",
+    "runs": 3,
+    "victim_shards_led": 7,
+    "shards_without_quorum": 0,
+    "baseline_p99_ms": 3.655,
+    "fault_availability": 1,
+    "fault_availability_range": [
+      1,
+      1
+    ],
+    "impact_availability": 1,
+    "overall_availability": 1,
+    "fault_errors": 0,
+    "impact_errors": 0,
+    "fault_p50_ms": 0.706,
+    "fault_p99_ms": 89.65,
+    "fault_p99_range": [
+      88.722,
+      90.996
+    ],
+    "fault_p999_ms": 101.714,
+    "impact_p99_ms": 68.412,
+    "impact_p999_ms": 98.918,
+    "impact_max_ms": 179.381,
+    "fault_write_p99_ms": 100.151,
+    "fault_read_p99_ms": 2.461,
+    "recovery_ms": 9996.470000000001,
+    "recovery_range": [
+      9995.623,
+      9998.531
+    ],
+    "recovery_masked": false,
+    "recovery_after_heal_ms": 0,
+    "disrupted_ms": 9900,
+    "disrupted_range": [
+      9900,
+      9900
+    ],
+    "rejoin_ms": 1.6270000000004075,
+    "fault_window_ms": 9996.470000000001,
+    "errors": []
+  },
+  {
+    "id": "slow-link-200ms",
+    "title": "Slow links: +200 ms on the busiest leader",
+    "category": "slow",
+    "runs": 3,
+    "victim_shards_led": 6,
+    "shards_without_quorum": 0,
+    "baseline_p99_ms": 3.756,
+    "fault_availability": 1,
+    "fault_availability_range": [
+      1,
+      1
+    ],
+    "impact_availability": 1,
+    "overall_availability": 1,
+    "fault_errors": 0,
+    "impact_errors": 0,
+    "fault_p50_ms": 0.719,
+    "fault_p99_ms": 361.6,
+    "fault_p99_range": [
+      359.541,
+      370.267
+    ],
+    "fault_p999_ms": 402.212,
+    "impact_p99_ms": 272.515,
+    "impact_p999_ms": 393.249,
+    "impact_max_ms": 767.723,
+    "fault_write_p99_ms": 395.15,
+    "fault_read_p99_ms": 2.333,
+    "recovery_ms": 10097.866,
+    "recovery_range": [
+      9998.144,
+      10097.895
+    ],
+    "recovery_masked": false,
+    "recovery_after_heal_ms": 98.37299999999959,
+    "disrupted_ms": 10000,
+    "disrupted_range": [
+      9900,
+      10000
+    ],
+    "rejoin_ms": 1.5509999999994761,
+    "fault_window_ms": 9998.835,
+    "errors": []
+  },
+  {
+    "id": "lossy-link-30",
+    "title": "Lossy links: 30% of the leader's messages dropped",
+    "category": "slow",
+    "runs": 3,
+    "victim_shards_led": 6,
+    "shards_without_quorum": 0,
+    "baseline_p99_ms": 4.157,
+    "fault_availability": 1,
+    "fault_availability_range": [
+      1,
+      1
+    ],
+    "impact_availability": 1,
+    "overall_availability": 1,
+    "fault_errors": 0,
+    "impact_errors": 0,
+    "fault_p50_ms": 0.707,
+    "fault_p99_ms": 19.809,
+    "fault_p99_range": [
+      19.502,
+      36.647
+    ],
+    "fault_p999_ms": 97.271,
+    "impact_p99_ms": 5.427,
+    "impact_p999_ms": 51.925,
+    "impact_max_ms": 187.472,
+    "fault_write_p99_ms": 52.896,
+    "fault_read_p99_ms": 2.719,
+    "recovery_ms": 0,
+    "recovery_range": [
+      0,
+      189.5560000000005
+    ],
+    "recovery_masked": true,
+    "recovery_after_heal_ms": 0,
+    "disrupted_ms": 300,
+    "disrupted_range": [
+      300,
+      1100
+    ],
+    "rejoin_ms": 1.0469999999986612,
+    "fault_window_ms": 9996.805999999999,
+    "errors": []
+  },
+  {
+    "id": "rolling-restart",
+    "title": "Rolling restart of all nodes",
+    "category": "crash",
+    "runs": 3,
+    "victim_shards_led": 0,
+    "shards_without_quorum": 0,
+    "baseline_p99_ms": 3.242,
+    "fault_availability": 1,
+    "fault_availability_range": [
+      1,
+      1
+    ],
+    "impact_availability": 1,
+    "overall_availability": 1,
+    "fault_errors": 0,
+    "impact_errors": 0,
+    "fault_p50_ms": 0.708,
+    "fault_p99_ms": 4.139,
+    "fault_p99_range": [
+      4.051,
+      4.766
+    ],
+    "fault_p999_ms": 16.898,
+    "impact_p99_ms": 3.281,
+    "impact_p999_ms": 15.198,
+    "impact_max_ms": 26.53,
+    "fault_write_p99_ms": 6.292,
+    "fault_read_p99_ms": 3.149,
+    "recovery_ms": 0,
+    "recovery_range": [
+      0,
+      0
+    ],
+    "recovery_masked": true,
+    "recovery_after_heal_ms": 0,
+    "disrupted_ms": 0,
+    "disrupted_range": [
+      0,
+      0
+    ],
+    "rejoin_ms": 41.552999999999884,
+    "fault_window_ms": 8558.340999999999,
+    "errors": []
+  }
+]

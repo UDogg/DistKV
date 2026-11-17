@@ -16,3 +16,8 @@ coverage.out
 .DS_Store
 dist-pages/
 .demo/
+
+# Fault-injection study tooling
+.venv-study/
+
+__pycache__/

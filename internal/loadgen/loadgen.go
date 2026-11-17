@@ -43,6 +43,10 @@ type Config struct {
 	KeyPrefix string
 	// OnSecond, if set, receives per-second progress.
 	OnSecond func(Second)
+	// OnOp, if set, receives every measured operation: when it was
+	// scheduled, its latency from that time, and its outcome. It is called
+	// concurrently from the workers.
+	OnOp func(scheduled time.Time, latency time.Duration, read bool, err error)
 }
 
 // Second is a per-second progress sample.
@@ -195,6 +199,9 @@ func Run(ctx context.Context, c *client.Client, cfg Config) *Report {
 		}
 		ops.Add(1)
 		secOps.Add(1)
+		if cfg.OnOp != nil {
+			cfg.OnOp(j.scheduled, lat, j.read, err)
+		}
 		if err != nil {
 			errs.Add(1)
 			secErrs.Add(1)

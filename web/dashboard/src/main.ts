@@ -1,9 +1,12 @@
 import { Topology } from "../../../clients/typescript/src/routing";
 import { AlertCenter } from "./alerts";
+import { Autopilot, detect, PLAYBOOKS, type NodeObs, type Repair } from "./autoheal";
 import { TimeSeriesChart } from "./charts";
 import { EXPERIMENTS, GAMEDAY_CSS, gameDayDocument, gameDayHTML, gameDayMarkdown, score, type ExperimentCtx, type GameDayRun } from "./gameday";
 import { CONSISTENCY_GRACE_MS, describe, IncidentTracker, summarize, type Incident, type Transition } from "./incidents";
 import { LiveBackend } from "./live";
+import { ACHIEVEMENTS, Game } from "./game";
+import { Coach, Explainer, openWelcome, shouldWelcome, Tour, type Story } from "./guide";
 import { LogConsole, type Level } from "./logs";
 import { fmtDuration, REPORT_CSS, reportDocument, reportHTML, reportMarkdown } from "./report";
 import { RingView } from "./ring";
@@ -119,6 +122,7 @@ const EVENT_STYLE: Record<string, [string, string]> = {
   incident_open: ["🚨", "bad incident"],
   incident_escalated: ["⚠️", "warn incident"],
   incident_resolved: ["✅", "ok incident"],
+  autopilot: ["🤖", "ok"],
 };
 
 const EVENT_FILTERS: Record<string, (kind: string) => boolean> = {
@@ -126,6 +130,7 @@ const EVENT_FILTERS: Record<string, (kind: string) => boolean> = {
   faults: (k) => ["node_down", "node_up", "partitioned", "healed", "shard_unavailable", "shard_recovered", "quorum_lost", "violation"].includes(k),
   leaders: (k) => ["leader_change", "election", "shard_recovered", "shard_unavailable"].includes(k),
   you: (k) => k === "action",
+  autopilot: (k) => k === "autopilot",
   incidents: (k) => k.startsWith("incident_"),
 };
 
@@ -136,6 +141,18 @@ const EVENT_LEVEL: Record<string, Level> = {
   quorum_lost: "error",
   partitioned: "warn",
   election: "warn",
+};
+
+/** The tooltip for each KPI tile, by its label. */
+const KPI_EXPLAIN: Record<string, string> = {
+  throughput: "kpi-throughput",
+  "p99 latency": "kpi-latency",
+  availability: "kpi-availability",
+  shards: "kpi-shards",
+  nodes: "kpi-nodes",
+  "leader moves": "kpi-leader-moves",
+  linearizability: "kpi-linearizable",
+  linearizable: "kpi-linearizable",
 };
 
 /** What a chaos action is called in alerts and reports. */
@@ -180,8 +197,40 @@ class App {
   private readonly gdSelected = new Set(EXPERIMENTS.map((e) => e.id));
   private monkey = false;
   private reportGameDay = false;
+  private readonly coach = new Coach();
+  private readonly game = new Game();
+  private readonly autopilot: Autopilot;
+  private rolling = false;
+  private majorityLost = false;
+  private monkeyStartedAt = 0;
+  private hudResult: { html: string; until: number } | null = null;
+  private hudStartedAt = 0;
+  private repairSpan: { start: number; end: number } | null = null;
+  private readonly tour = new Tour();
+  private welcomed = false;
 
   constructor(private readonly be: Backend) {
+    new Explainer();
+    let autoOn = true;
+    try {
+      autoOn = localStorage.getItem("distkv-autopilot") !== "off";
+    } catch {
+      /* storage unavailable */
+    }
+    this.autopilot = new Autopilot(
+      {
+        start: async (id) => {
+          await be.nodeAction(id, "start");
+          this.autopilotDid(id, `restarted ${id}`);
+        },
+        clearFaults: async (id) => {
+          await be.setFaults(id, { isolated: false, drop_percent: 0, delay_ms: 0 });
+          this.autopilotDid(id, `repaired the network of ${id}`);
+        },
+      },
+      autoOn,
+    );
+    this.autopilot.onEvent = (type, r, detail) => this.onRepair(type, r, detail);
     const style = document.createElement("style");
     style.textContent = REPORT_CSS + GAMEDAY_CSS;
     document.head.appendChild(style);
@@ -226,7 +275,13 @@ class App {
     this.be.subscribe((s) => this.onSnapshot(s), (c) => this.onConn(c));
     setInterval(() => this.pollDemo(), 2000);
     setInterval(() => this.pollNodeLogs(), 2000);
-    setInterval(() => document.hidden || this.renderStrip(), 250);
+    setInterval(() => {
+      this.autopilotTick();
+      if (!document.hidden) {
+        this.renderStrip();
+        this.renderHud();
+      }
+    }, 250);
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) return;
       if (this.stale) this.renderAll();
@@ -284,6 +339,7 @@ class App {
     const tick = this.diff();
     this.tracker.observe(s, this.demo, tick);
     for (const e of tick) this.logs.add("cluster", EVENT_LEVEL[e.kind] ?? "info", e.detail, [], e.ts);
+    if (tick.some((e) => e.kind === "quorum_lost")) this.majorityLost = true;
     if (this.tracker.active && Date.now() - this.lastSave > 10_000) this.saveIncidents();
     // A background tab keeps tracking (alerts and reports stay right) but
     // skips the DOM work; it catches up when it becomes visible.
@@ -292,6 +348,12 @@ class App {
       return;
     }
     this.renderAll();
+    // Wait for the first demo-info answer too: it decides whether the chaos
+    // controls exist, which the welcome offers.
+    if (!this.welcomed && this.demoPolled) {
+      this.welcomed = true;
+      if (shouldWelcome()) this.welcome();
+    }
   }
 
   private stale = false;
@@ -404,7 +466,7 @@ class App {
     }
     const up = s.nodes.filter((n) => n.reachable).length;
     const kpi = (label: string, value: string, sub: string, cls = "", glow = "") =>
-      `<div class="kpi ${cls}" style="${glow ? `--glow:${glow}` : ""}"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
+      `<div class="kpi ${cls}" style="${glow ? `--glow:${glow}` : ""}" data-explain="${KPI_EXPLAIN[label.toLowerCase()] ?? ""}" tabindex="0"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
     const p99cls = s.load.p99_ms === 0 ? "" : s.load.p99_ms < 10 ? "good" : s.load.p99_ms < 100 ? "warn" : "bad";
     setHTML($("kpis"), [
       kpi("Throughput", `${fmtNum(ops)}<small>ops/s</small>`, `${fmtNum(s.load.reads_per_sec)} reads · ${fmtNum(s.load.writes_per_sec)} writes`, "", "rgba(0,212,255,.3)"),
@@ -456,7 +518,15 @@ class App {
       const down = !n.reachable;
       card.classList.toggle("down", down);
       card.classList.toggle("partitioned", isolated);
-      const state = down
+      // Booting: the process runs but doesn't answer yet. The autopilot's
+      // own start counts at once (the process list is polled every 2 s).
+      const rep = this.autopilot.repairs.get(n.id);
+      const started = !!rep && rep.actedStage >= 0 && PLAYBOOKS[rep.kind].stages[rep.actedStage]?.act === "start";
+      const booting = down && (proc?.state === "running" || started);
+      card.classList.toggle("booting", booting);
+      const state = booting
+        ? `<span class="state" style="color:var(--accent2)">booting…</span>`
+        : down
         ? `<span class="state" style="color:var(--bad)">${proc?.state ?? "unreachable"}</span>`
         : isolated
           ? `<span class="state" style="color:var(--warn)">partitioned</span>`
@@ -470,15 +540,17 @@ class App {
       const l = n.load;
       const controls = this.demo
         ? `<div class="node-actions">
-            ${down
-              ? `<button class="btn sm ok" data-node="${n.id}" data-act="start">▶ Start</button>`
-              : `<button class="btn sm danger" data-node="${n.id}" data-act="kill">kill -9</button>
-                 <button class="btn sm" data-node="${n.id}" data-act="stop">Graceful stop</button>
-                 <button class="btn sm warn" data-node="${n.id}" data-act="${isolated ? "heal" : "isolate"}">${isolated ? "Heal" : "Partition"}</button>`}
+            ${booting
+              ? ""
+              : down
+              ? `<button class="btn sm ok" data-node="${n.id}" data-act="start" data-explain="act-start">▶ Start</button>`
+              : `<button class="btn sm danger" data-node="${n.id}" data-act="kill" data-explain="act-kill">💥 kill -9</button>
+                 <button class="btn sm" data-node="${n.id}" data-act="stop" data-explain="act-stop">Graceful stop</button>
+                 <button class="btn sm warn" data-node="${n.id}" data-act="${isolated ? "heal" : "isolate"}" data-explain="act-${isolated ? "heal" : "isolate"}">${isolated ? "Heal" : "Partition"}</button>`}
            </div>`
         : "";
       setHTML(card, `
-        <div class="node-head"><span class="dot"></span><strong>${esc(n.id)}</strong>${state}</div>
+        <div class="node-head" data-explain="node"><span class="dot"></span><strong>${esc(n.id)}</strong>${state}</div>
         <div class="node-meta">${esc(n.addr.replace(/^https?:\/\//, ""))}${proc && !down ? ` · pid ${proc.pid}` : ""}${n.uptime_seconds && !down ? ` · up ${fmtDur(n.uptime_seconds)}` : ""}</div>
         <div class="node-stats">
           <div><b>${n.shards_led}</b><span>leads</span></div>
@@ -486,6 +558,7 @@ class App {
           <div><b>${l ? fmtMs(l.p99_ms) : "—"}</b><span>p99</span></div>
         </div>
         <div class="leadbar" title="share of shard leaderships"><i style="width:${(n.shards_led / maxLead) * 100}%"></i></div>
+        <div class="node-repair">${this.repairMini(n.id)}</div>
         ${controls}`);
     }
   }
@@ -806,6 +879,7 @@ class App {
       else if (act === "heal") await this.be.setFaults(id, { isolated: false, drop_percent: 0, delay_ms: 0 });
       else await this.be.nodeAction(id, act as "kill" | "stop" | "start");
       if (act === "stop") this.tracker.noteGracefulStop(id);
+      if (!this.gdRunning && !opts.why?.includes("monkey")) this.scoreAct(id, act);
       const text = (ACT_TEXT[act] ?? ((x: string) => `${act} ${x}`))(id) + (opts.why ? ` (${opts.why})` : "");
       const healing = act === "start" || act === "heal";
       this.logAction(`you: ${text}`, healing ? "info" : "warn");
@@ -814,11 +888,288 @@ class App {
         if (healing) this.healAlert(text);
       }
       toast(text, act === "kill" ? "bad" : "ok");
+      this.narrateAct(id, act);
       setTimeout(() => this.pollDemo(), 300);
     } catch (e) {
       toast(String(e), "bad");
       this.logs.add("chaos", "error", `action failed: ${act} ${id}: ${e}`);
     }
+  }
+
+  // ---- self-healing autopilot and the game layer -------------------------------------
+
+  /** Why the autopilot is standing back right now, if it is. */
+  private autopilotPause(): string | null {
+    if (!this.demo?.demo) return "no supervisor";
+    if (this.gdRunning) return "Game Day in control";
+    if (this.rolling) return "rolling restart in progress";
+    return null;
+  }
+
+  private observe(): NodeObs[] {
+    const s = this.snap;
+    if (!s) return [];
+    return s.nodes.map((n) => ({
+      id: n.id,
+      proc: this.demo?.nodes.find((p) => p.id === n.id)?.state,
+      reachable: n.reachable,
+      ready: n.ready,
+      isolated: !!n.faults?.isolated,
+      lossy: (n.faults?.drop_percent ?? 0) > 0 || (n.faults?.delay_ms ?? 0) > 0,
+      lag: s.shards.reduce((a, sh) => a + (sh.lag?.[n.id] ?? 0), 0),
+    }));
+  }
+
+  private autopilotTick(): void {
+    const obs = this.observe();
+    if (!obs.length) return;
+    const pause = this.autopilotPause();
+    this.autopilot.tick(obs, Date.now(), pause !== null);
+    if (obs.filter((o) => detect(o) || (!o.reachable && o.proc !== "running")).length >= 2) this.game.unlock("double");
+    if (this.monkey && Date.now() - this.monkeyStartedAt >= 60_000) this.game.unlock("monkey");
+    const label = $("autopilot-state");
+    const text = !this.autopilot.enabled ? "off" : pause && pause !== "no supervisor" ? "paused" : this.autopilot.active.length ? `repairing ${this.autopilot.active.length}` : "on";
+    if (label.textContent !== text) label.textContent = text;
+    $("autopilot-btn").title = pause && this.autopilot.enabled ? `Paused: ${pause}` : "";
+  }
+
+  /** Records an action the autopilot took, like a user action. */
+  private autopilotDid(id: string, what: string): void {
+    this.events.unshift({ ts: Date.now(), kind: "autopilot", detail: `autopilot ${what}` });
+    this.renderEvents();
+    this.tracker.action("heal", `autopilot ${what}`, this.demo);
+    setTimeout(() => this.pollDemo(), 300);
+    void id;
+  }
+
+  private onRepair(type: "start" | "stage" | "done" | "error", r: Repair, detail?: string): void {
+    const pb = PLAYBOOKS[r.kind];
+    const st = pb.stages[r.stage];
+    if (type === "start") {
+      if (!this.autopilot.active.some((x) => x !== r)) this.hudStartedAt = Date.now();
+      this.repairSpan ??= { start: r.startedAt, end: r.startedAt };
+      this.logs.add("autopilot", "warn", `${r.node}: ${pb.title.toLowerCase()} detected; repair started`, [["playbook", r.kind]]);
+    } else if (type === "stage") {
+      this.logs.add("autopilot", "info", `${r.node}: ${st.label.toLowerCase()}`);
+    } else if (type === "done") {
+      const secs = ((r.doneAt! - r.startedAt) / 1000).toFixed(1);
+      this.logs.add("autopilot", "info", `${r.node}: back in service`, [["took_s", secs]]);
+      this.events.unshift({ ts: Date.now(), kind: "autopilot", detail: `autopilot healed ${r.node} (${pb.title.toLowerCase()}) in ${secs} s` });
+      this.renderEvents();
+      if (r.kind === "kill") this.game.unlock("phoenix");
+      if (this.repairSpan) this.repairSpan.end = Math.max(this.repairSpan.end, r.doneAt!);
+      toast(`🤖 ${r.node} healed in ${secs} s`, "ok");
+    } else {
+      this.logs.add("autopilot", "error", `${r.node}: repair step failed, retrying`, [["error", detail ?? ""]]);
+    }
+  }
+
+  /** The repair bar on a node's card. */
+  private repairMini(id: string): string {
+    const r = this.autopilot.repairs.get(id);
+    if (!r) return "";
+    const st = PLAYBOOKS[r.kind].stages[r.stage];
+    if (r.doneAt !== undefined) return `<div class="mini done"><span>✅ Healed</span><b>100%</b></div><div class="mini-bar"><i style="width:100%"></i></div>`;
+    return `<div class="mini"><span>${st.icon} ${st.label}…</span><b>${Math.round(r.progress * 100)}%</b></div><div class="mini-bar"><i style="width:${(r.progress * 100).toFixed(1)}%"></i></div>`;
+  }
+
+  private renderHud(): void {
+    const hud = $("heal-hud");
+    const repairs = [...this.autopilot.repairs.values()];
+    const result = this.hudResult && Date.now() < this.hudResult.until ? this.hudResult : null;
+    const s = this.snap;
+    if (!repairs.length && !result) {
+      hud.hidden = true;
+      $("incident-strip").classList.remove("hud-on");
+      return;
+    }
+    hud.hidden = false;
+    $("incident-strip").classList.add("hud-on");
+    for (const id of this.nodeCards.keys()) {
+      const slot = this.nodeCards.get(id)!.querySelector(".node-repair");
+      const html = this.repairMini(id);
+      if (slot && slot.innerHTML !== html) slot.innerHTML = html;
+    }
+    // Cluster health: half for shards with a leader, half for the nodes,
+    // where a node under repair counts for its repair's progress.
+    let hp = 1;
+    if (s) {
+      const obs = this.observe();
+      const nodeHp = obs.reduce((a, o) => {
+        const r = this.autopilot.repairs.get(o.id);
+        return a + (r ? r.progress : detect(o) || !o.reachable ? 0 : 1);
+      }, 0);
+      hp = 0.5 * (s.healthy_shards / s.shards.length) + 0.5 * (nodeHp / obs.length);
+    }
+    const active = repairs.filter((r) => r.doneAt === undefined);
+    const hpCls = hp >= 0.999 ? "full" : hp >= 0.75 ? "ok" : hp >= 0.5 ? "warn" : "bad";
+    const rows = repairs
+      .sort((a, b) => a.node.localeCompare(b.node))
+      .map((r) => {
+        const pb = PLAYBOOKS[r.kind];
+        const done = r.doneAt !== undefined;
+        const st = pb.stages[Math.min(r.stage, pb.stages.length - 1)];
+        const o = this.observe().find((x) => x.id === r.node);
+        const lagNote = !done && st.lag && o && o.reachable && o.lag > 20 ? ` <b>${o.lag.toLocaleString()} changes to go.</b>` : "";
+        const secs = (((r.doneAt ?? Date.now()) - r.startedAt) / 1000).toFixed(1);
+        return `<div class="repair kind-${r.kind}${done ? " done" : ""}" style="--node:${this.color(r.node)}">
+          <div class="rp-head"><span class="dot"></span><b>${esc(r.node)}</b><span class="rp-kind">${pb.title}</span><span class="rp-time">${secs} s</span><span class="rp-pct">${done ? "✅ healed" : `${Math.round(r.progress * 100)}%`}</span></div>
+          <ol class="rp-steps">${pb.stages.map((x, i) => `<li class="${done || i < r.stage ? "done" : i === r.stage ? "now" : ""}"><span>${done || i < r.stage ? "✓" : x.icon}</span>${x.label}</li>`).join("")}</ol>
+          <div class="rp-bar"><i style="width:${(r.progress * 100).toFixed(1)}%"></i></div>
+          <p class="rp-detail">${done ? `Back in service after ${secs} s.` : st.detail + lagNote}</p>
+        </div>`;
+      })
+      .join("");
+    const elapsed = ((Date.now() - this.hudStartedAt) / 1000).toFixed(1);
+    setHTML(hud, `
+      <header>
+        <h2>${active.length ? "🤖 Self-healing in progress" : repairs.length ? "🤖 Repairs complete" : "🎉 Recovered"} <button class="ex-i" type="button" data-explain="autopilot" aria-label="What is this?">?</button>
+          <small>${active.length > 1 ? `${active.length} repairs running in parallel` : active.length ? "1 repair running" : "confirming the cluster is fully healthy…"}</small></h2>
+        ${active.length ? `<span class="hud-timer">⏱ ${elapsed} s</span>` : ""}
+      </header>
+      <div class="hp ${hpCls}" data-explain="hp"><span class="hp-label">Cluster health</span><div class="hp-bar"><i style="width:${(hp * 100).toFixed(1)}%"></i></div><b>${Math.floor(hp * 100)}%</b></div>
+      ${rows ? `<div class="repairs">${rows}</div>` : ""}
+      ${result ? result.html : ""}`);
+  }
+
+  private scoreAct(id: string, act: string): void {
+    const n = this.snap?.nodes.find((x) => x.id === id);
+    if (act === "kill") {
+      this.game.unlock("plug");
+      if ((n?.shards_led ?? 0) >= 5) this.game.unlock("kingslayer");
+      this.game.addXP(15);
+    } else if (act === "isolate") {
+      this.game.unlock("ninja");
+      this.game.addXP(10);
+    } else if (act === "stop") {
+      this.game.addXP(10);
+    }
+  }
+
+  private setAutopilot(on: boolean, quiet = false): void {
+    this.autopilot.enabled = on;
+    if (!on) this.autopilot.cancelAll();
+    try {
+      localStorage.setItem("distkv-autopilot", on ? "on" : "off");
+    } catch {
+      /* storage unavailable */
+    }
+    const b = $("autopilot-btn");
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", String(on));
+    $("autopilot-state").textContent = on ? "on" : "off";
+    $("heal-hint").hidden = !on;
+    if (quiet) return;
+    toast(on ? "🤖 Self-healing on: broken servers are repaired automatically" : "Self-healing off: use 🩹 Heal or ▶ Start to repair", on ? "ok" : "info");
+    this.logs.add("autopilot", "info", `self-healing ${on ? "on" : "off"}`);
+  }
+
+  private renderTrophyBtn(): void {
+    const lv = this.game.level();
+    const got = ACHIEVEMENTS.filter((a) => this.game.has(a.id)).length;
+    const b = $("trophy-btn");
+    b.innerHTML = `🏆 <span>Lv ${lv.n}</span><small>${got}/${ACHIEVEMENTS.length}</small>`;
+    b.setAttribute("aria-label", `Level ${lv.n}, ${got} of ${ACHIEVEMENTS.length} achievements`);
+  }
+
+  // ---- the newcomer's guide -------------------------------------------------------
+
+  private welcome(): void {
+    if (this.tour.running) this.tour.end();
+    const s = this.snap;
+    openWelcome({
+      sim: this.be.mode === "sim",
+      nodes: s?.spec.members.length ?? 5,
+      shards: s?.spec.shards ?? 24,
+      rf: s?.spec.replication_factor ?? 3,
+      canBreak: !$("control-card").hidden,
+      coach: this.coach,
+      tour: this.tour,
+      breakSomething: () => {
+        $("control-card").scrollIntoView({ block: "center", behavior: "smooth" });
+        const b = document.querySelector<HTMLElement>('[data-scenario="kill-leader"]');
+        b?.classList.add("beckon");
+        setTimeout(() => {
+          b?.classList.remove("beckon");
+          this.scenario("kill-leader");
+        }, 1200);
+      },
+    });
+  }
+
+  /** Plain-language narration, muted while scripted chaos narrates itself. */
+  private narrate(story: Story): void {
+    if (this.gdRunning || this.monkey || this.tour.running) return;
+    this.coach.say(story);
+  }
+
+  private narrateAct(id: string, act: string): void {
+    const s = this.snap;
+    const n = s?.nodes.find((x) => x.id === id);
+    const who = `<b>${esc(id)}</b>`;
+    const shards = s?.spec.shards ?? 0;
+    const auto = this.autopilot.enabled && this.autopilotPause() === null;
+    switch (act) {
+      case "kill": {
+        const led = n?.shards_led ?? 0;
+        this.narrate({
+          icon: "💥",
+          title: `You pulled the plug on ${esc(id)}`,
+          tone: "bad",
+          body: led
+            ? `${who} was the leader (the one in charge) for <b>${led} of the ${shards} shards</b>. Those slices of data are leaderless right now. Watch the <b>Shards</b> map: the surviving copies notice the silence, hold a vote, and elect new leaders in about a second. Clients automatically retry, so almost nobody notices.${auto ? ` Meanwhile the <b>🤖 autopilot</b> restores its power and cold-boots it: its memory was wiped, so it rebuilds it from disk. Follow the repair bar.` : " Press <b>▶ Start</b> on its card to power it back on."}`
+            : `${who} wasn't leading any shards, only holding backup copies. Nothing needs to be re-elected: the leaders carry on with the copies on the other servers.${auto ? " The <b>🤖 autopilot</b> will restore its power and cold-boot it." : ""}`,
+        });
+        break;
+      }
+      case "stop":
+        this.narrate({
+          icon: "⏹",
+          title: `You asked ${esc(id)} to shut down politely`,
+          body: `A graceful stop is a planned maintenance reboot. ${who} first hands its leader jobs to other servers, then leaves. Done right, this causes <b>zero failed requests</b>. ${auto ? "The <b>🤖 autopilot</b> notices and restarts it within seconds: a quick warm start, because nothing in memory was lost." : "Press <b>▶ Start</b> on its card to bring it back."}`,
+        });
+        break;
+      case "isolate":
+        this.narrate({
+          icon: "✂️",
+          title: `You cut ${esc(id)} off the network`,
+          tone: "bad",
+          body: `${who} is still running but can't reach anyone. The servers that can still talk to each other are the majority, so they elect new leaders and keep going. ${who} can't make any changes on its own (it can't win a vote), which is exactly what stops a split cluster from giving two different answers.${auto ? " The <b>🤖 autopilot</b> is already re-routing around the cut." : ""}`,
+        });
+        break;
+      case "heal":
+        this.narrate({
+          icon: "🔌",
+          title: `${esc(id)} is reconnected`,
+          tone: "ok",
+          body: `${who} catches up on every change it missed from the leaders, then rejoins as a normal copy. Nothing it held was lost, and nothing it missed is skipped.`,
+        });
+        break;
+      case "start":
+        this.narrate({
+          icon: "▶",
+          title: `${esc(id)} is back online`,
+          tone: "ok",
+          body: `${who} reads its saved data from disk, downloads whatever it missed while it was off, and rejoins. Over the next few seconds the cluster hands some leader jobs back to it to spread the work evenly.`,
+        });
+        break;
+    }
+  }
+
+  private narrateResolved(id: number, s: ReturnType<typeof summarize>, stars = 0): void {
+    const facts: string[] = [];
+    if (s.clientFailed !== undefined && s.availability !== undefined) {
+      facts.push(s.clientFailed === 0 ? "<b>not a single request failed</b>" : `<b>${(s.availability * 100).toFixed(2)}%</b> of requests succeeded (${s.clientFailed} retried or failed)`);
+    }
+    if (s.failovers) facts.push(`${s.failovers} shard${s.failovers === 1 ? "" : "s"} elected a new leader (slowest took ${fmtDuration(s.maxFailoverMs)})`);
+    if (s.verifiedOps) facts.push(`${s.verifiedOps.toLocaleString()} answers were proven correct`);
+    this.narrate({
+      icon: "✅",
+      title: `Healed itself in ${fmtDuration(s.durationMs)}${stars ? ` ${"⭐".repeat(stars)}` : ""}`,
+      tone: "ok",
+      body: `Every server and every shard is healthy again${facts.length ? ": " + facts.join(", ") : ""}. ${this.autopilot.enabled ? "Raft kept the data available the whole time; the self-healing autopilot brought the broken servers back, all at once." : "No human had to fix anything. That automatic recovery is what the Raft voting method is built for."}`,
+      action: { label: "📄 Read the incident report", run: () => this.openReport(id) },
+    });
   }
 
   private healAlert(what: string): void {
@@ -854,13 +1205,25 @@ class App {
         this.logAction(`you: 30% packet loss + 5ms delay on ${n.id}`);
         this.tracker.action("chaos", `30% packet loss + 5 ms delay on ${n.id}`, this.demo);
         toast(`30% packet loss on ${n.id}`);
+        this.game.addXP(10);
+        this.narrate({
+          icon: "📉",
+          title: `${esc(n.id)} now has terrible Wi-Fi`,
+          body: `30% of its messages vanish and the rest arrive late. The system notices missing messages and simply sends them again, so every answer stays correct. Expect the speed chart to wobble, not the availability.`,
+        });
         break;
       }
       case "rolling": {
         toast("Rolling restart: graceful stop → start, one node at a time");
+        this.narrate({
+          icon: "🔁",
+          title: "Rolling restart: updating every server, one at a time",
+          body: `This is how real companies install updates with no downtime. Each server politely hands off its leader jobs, restarts, catches up and rejoins before the next one goes. Watch <b>Availability</b>: it should stay near 100% the whole way.`,
+        });
         // One incident for the whole procedure, kept open until it finishes.
         this.tracker.action("chaos", "rolling restart (graceful stop → start, one node at a time)", this.demo);
         this.tracker.hold();
+        this.rolling = true;
         try {
           for (const n of s.spec.members) {
             await this.act(n.id, "stop", { track: false });
@@ -870,6 +1233,7 @@ class App {
           }
         } finally {
           this.tracker.release();
+          this.rolling = false;
         }
         this.tracker.action("heal", "rolling restart finished", this.demo);
         toast("Rolling restart complete", "ok");
@@ -897,6 +1261,12 @@ class App {
         this.tracker.action("heal", "heal everything", this.demo);
         this.healAlert("Heal everything: restarting stopped nodes and clearing network faults");
         toast("Healing all nodes", "ok");
+        this.narrate({
+          icon: "🩹",
+          title: "Healing everything",
+          body: "Stopped servers are restarting and network faults are cleared. Restarted servers download what they missed. The incident closes (with a green alert) once every shard has a leader and every server is healthy.",
+          tone: "ok",
+        });
         break;
       }
     }
@@ -1059,10 +1429,38 @@ class App {
         case "c": case "C": $("consistency-pill").hidden ? toast("No consistency probe in this mode") : $("consistency-pill").click(); break;
         case "/": e.preventDefault(); $("log-search").focus(); $("logs-card").scrollIntoView({ behavior: "smooth", block: "center" }); break;
         case "?": ($("shortcuts-dialog") as HTMLDialogElement).showModal(); break;
+        case "i": case "I": this.welcome(); break;
+        case "t": case "T": this.tour.start(); break;
+        case "s": case "S": if (chaos) this.setAutopilot(!this.autopilot.enabled); break;
+        case "x": case "X": $("trophy-btn").click(); break;
         default: return;
       }
     });
     $("shortcuts-btn").addEventListener("click", () => ($("shortcuts-dialog") as HTMLDialogElement).showModal());
+    $("guide-btn").addEventListener("click", () => this.welcome());
+    $("autopilot-btn").addEventListener("click", () => this.setAutopilot(!this.autopilot.enabled));
+    this.setAutopilot(this.autopilot.enabled, true);
+    const trophies = $("trophy-dialog") as HTMLDialogElement;
+    const showTrophies = () => {
+      $("trophy-body").innerHTML = this.game.cabinetHTML();
+      trophies.showModal();
+    };
+    $("trophy-btn").addEventListener("click", showTrophies);
+    $("trophy-close").addEventListener("click", () => trophies.close());
+    trophies.addEventListener("click", (e) => e.target === trophies && trophies.close());
+    $("trophy-reset").addEventListener("click", () => {
+      if (!confirm("Reset your level, stats and achievements?")) return;
+      this.game.reset();
+      $("trophy-body").innerHTML = this.game.cabinetHTML();
+    });
+    this.game.onChange = () => {
+      this.renderTrophyBtn();
+      if (trophies.open) $("trophy-body").innerHTML = this.game.cabinetHTML();
+    };
+    this.renderTrophyBtn();
+    document.addEventListener("distkv-explain", (e) => this.game.explained(String((e as CustomEvent).detail)));
+    document.addEventListener("distkv-tour-done", () => this.game.unlock("tourist"));
+    $("banner-guide").addEventListener("click", () => this.welcome());
     const openConsistency = () => {
       this.renderConsistency();
       ($("consistency-dialog") as HTMLDialogElement).showModal();
@@ -1091,7 +1489,16 @@ class App {
       // Not sticky: the incident strip carries the state once the alert is gone.
       this.alerts.raise({ level: "critical", incidentId: inc.id, heal: !!this.demo?.demo, title: `Incident #${inc.id} opened`, body: `${what} Watching the cluster recover…` });
       this.alerts.setOpenIncidents(1);
+      this.game.disaster();
       event("incident_open", `Incident #${inc.id} opened: ${inc.trigger}`);
+      if (inc.triggerKind !== "action") {
+        this.narrate({
+          icon: "⚠️",
+          title: "Something broke on its own",
+          body: `The cluster detected a problem nobody here caused: <b>${esc(inc.trigger)}</b>. That's exactly what happens in real data centers. Watch it recover without anyone's help.`,
+          tone: "bad",
+        });
+      }
       this.logs.add("incident", "error", `incident #${inc.id} opened`, [["trigger", inc.trigger], ["kind", inc.triggerKind]]);
     } else if (t.type === "escalated") {
       this.alerts.raise({ level: "warning", incidentId: inc.id, title: `Incident #${inc.id} escalated`, body: capitalize(t.detail) });
@@ -1107,6 +1514,22 @@ class App {
       this.alerts.raise({ level: "resolved", incidentId: inc.id, title: `Incident #${inc.id} resolved in ${fmtDuration(s.durationMs)}`, body: parts.join(" · ") });
       this.alerts.setOpenIncidents(0);
       event("incident_resolved", `Incident #${inc.id} resolved in ${fmtDuration(s.durationMs)}: ${parts.join(", ")}`);
+      // The incident measures from the fault taking effect; repairs from
+      // when they were noticed. Report whichever is longer, so the result
+      // never claims a faster recovery than the repair bars showed.
+      const healedMs = Math.max(s.durationMs, this.repairSpan ? this.repairSpan.end - this.repairSpan.start : 0);
+      this.repairSpan = null;
+      const res = this.game.recovered({ durationMs: healedMs, failed: s.clientFailed, availability: s.availability });
+      if (this.majorityLost) this.game.unlock("majority");
+      this.majorityLost = false;
+      this.hudResult = {
+        until: Date.now() + 9000,
+        html: `<div class="hud-result"><span class="hud-party" aria-hidden="true">🎉</span><div><b>Fully healed in ${fmtDuration(healedMs)}</b>
+          <span class="stars" aria-label="${res.stars} of 3 stars">${"★".repeat(res.stars)}<i>${"★".repeat(3 - res.stars)}</i></span>
+          <small>${s.clientFailed === 0 ? "zero failed requests" : s.availability !== undefined ? `${(s.availability * 100).toFixed(2)}% of requests served` : ""}${res.best && this.game.state.survived > 1 ? " · <b>new personal best!</b>" : ""}</small></div>
+          <span class="hud-xp">+${res.xp} XP</span></div>`,
+      };
+      this.narrateResolved(inc.id, s, res.stars);
       this.logs.add("incident", "info", `incident #${inc.id} resolved`, [
         ["duration", fmtDuration(s.durationMs)],
         ["severity", inc.severity],
@@ -1378,6 +1801,11 @@ class App {
     let elapsedEst = 0;
     this.alerts.raise({ level: "info", title: "Game Day started", body: `${ids.length} experiment${ids.length === 1 ? "" : "s"}, about ${Math.max(1, Math.round(total / 60))} min. Each one is verified automatically.` });
     this.logs.add("gameday", "info", "game day started", [["experiments", ids.join(",")]]);
+    this.coach.say({
+      icon: "🎯",
+      title: "Game Day: a fire drill for the cluster",
+      body: `${ids.length} disasters will run back to back: crashed leaders, network cuts, flaky networks, restarts${ids.includes("quorum-loss") ? ", even losing a majority" : ""}. Each has a prediction (like "no request fails") that's checked automatically. You'll get a graded report at the end, about ${Math.max(1, Math.round(total / 60))} min from now.`,
+    });
     this.renderGameDay();
     for (const r of run.results) {
       const e = EXPERIMENTS.find((x) => x.id === r.id)!;
@@ -1459,6 +1887,15 @@ class App {
       body: `${sc.passed} of ${sc.total} hypotheses held · ${sc.pct.toFixed(0)}% of checks passed${run.verifiedOps !== undefined ? ` · ${run.verifiedOps.toLocaleString()} ops verified linearizable` : ""}`,
     });
     this.logs.add("gameday", "info", "game day finished", [["grade", sc.grade], ["passed", `${sc.passed}/${sc.total}`]]);
+    if (!run.cancelled && sc.grade.startsWith("A")) this.game.unlock("marshal");
+    if (!run.cancelled) {
+      this.coach.say({
+        icon: sc.passed === sc.total ? "🏆" : "📋",
+        title: `Game Day finished: grade ${sc.grade}`,
+        body: `${sc.passed} of ${sc.total} predictions held${run.verifiedOps ? `, and ${run.verifiedOps.toLocaleString()} answers were proven correct along the way` : ""}. ${sc.passed === sc.total ? "The cluster survived every disaster thrown at it." : "The report shows exactly which check failed and why."}`,
+        tone: sc.passed === sc.total ? "ok" : "bad",
+      });
+    }
     this.saveGameDay();
     this.renderGameDay();
     if (!run.cancelled) this.openGameDayReport();
@@ -1503,6 +1940,13 @@ class App {
     if (this.monkey) {
       this.alerts.raise({ level: "warning", title: "Chaos Monkey released", body: "A random fault every few seconds (kill, stop, partition or packet loss), healed after a few seconds. Press M or the button to stop it." });
       this.logs.add("monkey", "warn", "chaos monkey on");
+      this.monkeyStartedAt = Date.now();
+      this.coach.say({
+        icon: "🐒",
+        title: "The Chaos Monkey is loose",
+        body: "Every few seconds it crashes a server, cuts a network cable or ruins the Wi-Fi, then fixes it a little later. Netflix runs a tool like this against its real servers every day. Keep an eye on <b>Availability</b> and the <b>Linearizable</b> tile: they should stay green while the monkey does its worst. Press the button again to catch it.",
+        tone: "bad",
+      });
       this.monkeyLoop();
     } else {
       this.logs.add("monkey", "info", "chaos monkey off");
@@ -1528,9 +1972,14 @@ class App {
           this.logAction(`chaos monkey: 30% packet loss + 5ms delay on ${n.id}`);
           this.tracker.action("chaos", `30% packet loss + 5 ms delay on ${n.id} (chaos monkey)`, this.demo);
         }
-        await this.pause(rnd(4000, 8000), stopped);
-        await this.scenario("heal");
-        await this.waitUntil(() => !this.tracker.active, 30_000, stopped);
+        if (this.autopilot.enabled) {
+          // The autopilot repairs it; the monkey waits for full health.
+          await this.waitUntil(() => this.steady(), 45_000, stopped);
+        } else {
+          await this.pause(rnd(4000, 8000), stopped);
+          await this.scenario("heal");
+          await this.waitUntil(() => !this.tracker.active, 30_000, stopped);
+        }
       }
     } catch {
       /* stopped */

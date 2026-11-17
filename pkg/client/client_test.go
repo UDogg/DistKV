@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -176,5 +177,72 @@ func TestUnavailableAfterDeadline(t *testing.T) {
 	}
 	if time.Since(start) > time.Second {
 		t.Fatalf("retries did not respect the context deadline")
+	}
+}
+
+// A node that accepts connections but never answers (a paused process) must
+// cost one attempt, not the whole deadline: the client moves on to another
+// replica.
+func TestAttemptTimeoutSkipsHungNode(t *testing.T) {
+	release := make(chan struct{})
+	var hung, ok *httptest.Server
+	hung = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/cluster" {
+			writeCluster(w, r.Host, ok.Listener.Addr().String())
+			return
+		}
+		select { // wedged: never answers
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer hung.Close()
+	defer close(release) // runs first: unblock the wedged handler before Close waits for it
+	ok = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(api.HeaderVersion, "3")
+		if r.Method == http.MethodPut {
+			json.NewEncoder(w).Encode(api.WriteResponse{Version: 3})
+			return
+		}
+		w.Write([]byte("value"))
+	}))
+	defer ok.Close()
+
+	// As after a leader is paused: the client still believes it leads.
+	asLeader := func(c *Client) { c.setLeader(c.topo.ShardForKey("k"), hung.URL) }
+	c, err := New(context.Background(), Config{Endpoints: []string{hung.URL}, AttemptTimeout: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	asLeader(c)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	start := time.Now()
+	for _, op := range []string{"get", "put"} {
+		var err error
+		if op == "get" {
+			_, err = c.Get(ctx, "k")
+		} else {
+			_, err = c.Put(ctx, "k", []byte("v"))
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", op, err)
+		}
+		asLeader(c)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("took %s: the hung node held the operations instead of costing one attempt", d)
+	}
+
+	// Disabled, the same hung node holds the operation for its deadline.
+	c2, err := New(context.Background(), Config{Endpoints: []string{hung.URL}, AttemptTimeout: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	asLeader(c2)
+	short, cancel2 := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel2()
+	if _, err := c2.Get(short, "k"); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("without an attempt timeout: err = %v, want ErrUnavailable after the deadline", err)
 	}
 }
